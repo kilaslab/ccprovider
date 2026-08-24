@@ -158,7 +158,8 @@ separate entries.
 
 ## Requirements
 
-Node 20.11+, macOS or Linux (including WSL). Native Windows isn't supported: the profile
+Node 20.11+ to run — Bun is not required, and is only used to develop the project.
+macOS or Linux (including WSL). Native Windows isn't supported: the profile
 directories rely on POSIX symlinks.
 
 ## Is this allowed?

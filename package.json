@@ -1,8 +1,15 @@
 {
   "name": "ccprovider",
   "version": "0.1.0",
-  "description": "Provider profiles for Claude Code — run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
-  "keywords": ["claude-code", "deepseek", "openrouter", "anthropic", "cli", "llm"],
+  "description": "Provider profiles for Claude Code \u2014 run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
+  "keywords": [
+    "claude-code",
+    "deepseek",
+    "openrouter",
+    "anthropic",
+    "cli",
+    "llm"
+  ],
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -11,12 +18,17 @@
   "bin": {
     "ccprovider": "dist/cli.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "prepublishOnly": "npm run build"
+    "dev": "bun run src/cli.ts",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0"
@@ -26,5 +38,6 @@
     "@types/node": "^22.10.0",
     "bun-types": "^1.4.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "packageManager": "bun@1.4.0"
 }

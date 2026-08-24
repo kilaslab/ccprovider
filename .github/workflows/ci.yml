@@ -19,20 +19,24 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun test
-      - run: npx tsc --noEmit -p tsconfig.build.json
+      - run: bun run typecheck
 
-  build:
+  # The artifact is published to npm and must run for users who do not have Bun.
+  # Deps still install via bun so this builds from the same locked versions the
+  # tests ran against — but nothing here executes under Bun.
+  node-compat:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm install
-      - run: npm run build
-      # The published artifact must run on plain Node, without Bun.
+      - run: bun install --frozen-lockfile
+      - run: bun run build
       - run: node dist/cli.js --help
       - run: node dist/cli.js ls
+      - run: node dist/cli.js doctor

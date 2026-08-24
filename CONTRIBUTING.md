@@ -3,8 +3,15 @@
 ```bash
 bun install
 bun test
-npm run build
+bun run build
+bun run dev ls      # run from source, no build step
 ```
+
+Bun is the toolchain. npm appears in exactly one place — as the *distribution*
+channel — because users installing `ccprovider` must not need Bun. That is why `src/`
+imports only `node:*` builtins and why CI has a `node-compat` job that builds with
+bun and then runs the output under Node 20, 22 and 24. If you reach for a
+`Bun.*` API in `src/`, that job is what will stop you; `test/` may use anything.
 
 ## Layout
 
