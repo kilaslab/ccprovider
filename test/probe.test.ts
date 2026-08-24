@@ -7,11 +7,14 @@ import type { Paths } from '../src/paths.js'
 
 /** Route by URL so a fake provider can answer /v1/messages and /chat/completions
  *  differently — which is the whole basis of the format detection. */
-function router(routes: Record<string, number>, capture?: { body?: any; url?: string }): typeof fetch {
+function router(routes: Record<string, number>, capture?: { body?: any; url?: string; urls?: string[] }): typeof fetch {
   return (async (url: string | URL, init?: RequestInit) => {
     const u = String(url)
     if (capture) {
       capture.url = u
+      // probeEndpoint fires the control request in parallel, so record every URL —
+      // a single `url` field would race between the two.
+      ;(capture.urls ??= []).push(u)
       if (init?.body) capture.body = JSON.parse(String(init.body))
     }
     const key = Object.keys(routes).find((k) => u.endsWith(k))
@@ -26,8 +29,23 @@ function router(routes: Record<string, number>, capture?: { body?: any; url?: st
 }
 
 describe('endpoint format detection', () => {
-  test.each([[401], [403], [400], [422]])('HTTP %i on /v1/messages means the route exists', async (status) => {
+  test.each([[401], [403], [400], [422]])('HTTP %i on /v1/messages, with a 404 control, means the route exists', async (status) => {
     const v = await probeEndpoint('https://x.dev/anthropic', router({ '/v1/messages': status }))
+    expect(v.kind).toBe('anthropic')
+  })
+
+  test('a server that answers every path alike is reported inconclusive, not as a pass', async () => {
+    // Measured: DeepSeek returns 401 for /anthropic/v1/messages *and* for any bogus
+    // path under /anthropic. Claiming "speaks Anthropic Messages" there would let a
+    // typo'd URL through, to fail later mid-session.
+    const authWall = (async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' })) as unknown as typeof fetch
+    const v = await probeEndpoint('https://api.deepseek.com/anthropic', authWall)
+    expect(v.kind).toBe('inconclusive')
+  })
+
+  test('a real route is still distinguished when the control 404s', async () => {
+    // OpenRouter: /v1/messages -> 401, bogus path -> 404. Routing tells them apart.
+    const v = await probeEndpoint('https://openrouter.ai/api', router({ '/v1/messages': 401 }))
     expect(v.kind).toBe('anthropic')
   })
 
@@ -48,9 +66,17 @@ describe('endpoint format detection', () => {
   })
 
   test('a trailing slash does not produce a double slash', async () => {
-    const cap: { url?: string } = {}
+    const cap: { urls?: string[] } = {}
     await probeEndpoint('https://x.dev/anthropic/', router({ '/v1/messages': 401 }, cap))
-    expect(cap.url).toBe('https://x.dev/anthropic/v1/messages')
+    expect(cap.urls).toContain('https://x.dev/anthropic/v1/messages')
+    expect(cap.urls!.every((u) => !u.includes('//v1'))).toBe(true)
+  })
+
+  test('the control request goes to a path that cannot legitimately exist', async () => {
+    const cap: { urls?: string[] } = {}
+    await probeEndpoint('https://x.dev/anthropic', router({ '/v1/messages': 401 }, cap))
+    expect(cap.urls).toHaveLength(2)
+    expect(cap.urls!.find((u) => u.includes('control_probe'))).toBeTruthy()
   })
 
   test('the OpenAI guidance names the URL and a concrete next step', () => {

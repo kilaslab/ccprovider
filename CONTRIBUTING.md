@@ -44,16 +44,26 @@ You can see it decide: run `claude --print hi` through a profile and watch for
 
 ## Adding a provider preset
 
-Add an entry to `src/presets.ts` with a base URL you have actually probed:
+Add an entry to `src/presets.ts` with a base URL you have actually probed — and probe
+it with a **control path**, because a bare 401 proves nothing:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -X POST \
-  https://your-provider.example/anthropic/v1/messages \
-  -H 'content-type: application/json' -d '{}'
+for path in /v1/messages /v1/__bogus__; do
+  printf '%-16s ' "$path"
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    "https://your-provider.example/anthropic$path" \
+    -H 'content-type: application/json' -d '{}'
+done
 ```
 
-`401` or `403` means the Anthropic route exists. `404` means it doesn't — that provider
-needs a LiteLLM front and isn't a candidate for a preset.
+If the bogus path returns something *different* (usually 404) while `/v1/messages`
+returns 401/403, the route is real. If both return the same status, the provider
+authenticates before routing — DeepSeek does this — and an unauthenticated probe
+cannot distinguish a correct URL from a typo. That is what the `inconclusive` verdict
+means, and why the wizard follows up with an authenticated `probeModel` call.
+
+A 404 on `/v1/messages` with a live `/chat/completions` means OpenAI-only: that
+provider needs a LiteLLM front and isn't a candidate for a preset.
 
 Set `sourced` honestly: `'catalog-inferred'` if you derived the model IDs from a model
 list rather than the provider's own Claude Code documentation. Add the preset to the

@@ -1,6 +1,6 @@
 import { p, orCancel } from './prompts.js'
 import { PRESETS, findPreset, MIRRORS, compactWindowFor } from '../presets.js'
-import { probeEndpoint, OPENAI_GUIDANCE } from '../probe.js'
+import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
 import { validateName } from '../profile.js'
 import type { Profile, Preset } from '../types.js'
@@ -114,6 +114,11 @@ export async function runWizard(
     s.stop(`Unexpected response (HTTP ${verdict.status})`)
     const go = orCancel(await p.confirm({ message: 'This may not be an Anthropic-format endpoint. Continue?', initialValue: false }))
     if (!go) { p.cancel('Nothing was saved.'); process.exit(1) }
+  } else if (verdict.kind === 'inconclusive') {
+    // This provider authenticates before it routes, so an unauthenticated request
+    // cannot tell a real endpoint from a typo. Say so rather than implying a pass —
+    // the authenticated check after the key is what actually settles it.
+    s.stop('Reachable, but it answers every path the same — will confirm with your key')
   } else {
     s.stop('Endpoint speaks Anthropic Messages')
   }
@@ -131,7 +136,24 @@ export async function runWizard(
     existing?.profile,
   )
 
-  // ---- 7. effort
+  // ---- 7. the check that actually proves it: a real authenticated request
+  const vs = p.spinner()
+  vs.start(`Testing ${aliases.opus}`)
+  const live = await probeModel(baseUrl, apiKey, aliases.opus)
+  if (live.ok) {
+    vs.stop('Model responded — endpoint, key and model ID all check out')
+  } else {
+    vs.stop(`Provider rejected the request: ${live.error ?? `HTTP ${live.status}`}`)
+    const go = orCancel(
+      await p.confirm({
+        message: 'Save anyway? (`ccprovider doctor` re-runs this check later)',
+        initialValue: false,
+      }),
+    )
+    if (!go) { p.cancel('Nothing was saved.'); process.exit(1) }
+  }
+
+  // ---- 8. effort
   const effortLevel = existing?.profile.effortLevel ?? preset?.effortLevel ?? null
 
   const profile: Profile = {

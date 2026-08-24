@@ -4,7 +4,15 @@ export type EndpointVerdict =
   | { kind: 'anthropic'; status: number }
   | { kind: 'openai-only'; status: number }
   | { kind: 'unreachable'; detail: string }
+  /** The server answers before it routes, so the URL cannot be judged from outside.
+   *  Only an authenticated request can settle it. */
+  | { kind: 'inconclusive'; status: number }
   | { kind: 'unknown'; status: number }
+
+/** A path that cannot legitimately exist, used as a control. If it answers the same
+ *  as /v1/messages, the server is authenticating before routing and its response to
+ *  /v1/messages carries no information about whether that route exists. */
+const CONTROL_PATH = '/v1/__ccprovider_control_probe__'
 
 const TIMEOUT = 15_000
 
@@ -16,23 +24,35 @@ const TIMEOUT = 15_000
  * which lag their actual API.
  */
 export async function probeEndpoint(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<EndpointVerdict> {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`
+  const root = baseUrl.replace(/\/$/, '')
   let status: number
+  let control: number
   try {
-    const res = await fetchImpl(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-      signal: AbortSignal.timeout(TIMEOUT),
-    })
-    status = res.status
+    // Both requests, so the control can tell a real route from a blanket auth wall.
+    // Measured across providers: DeepSeek answers identically on any path, while
+    // OpenRouter 404s a bogus one — so without this, a typo'd DeepSeek URL would be
+    // reported as a working Anthropic endpoint and only fail later, mid-session.
+    const [a, b] = await Promise.all([
+      post(root + '/v1/messages', fetchImpl),
+      post(root + CONTROL_PATH, fetchImpl),
+    ])
+    status = a
+    control = b
   } catch (e) {
     return { kind: 'unreachable', detail: (e as Error).message }
   }
 
-  if (status === 401 || status === 403 || status === 400 || status === 422) {
-    return { kind: 'anthropic', status }
-  }
+  const authLike = status === 401 || status === 403
+  const parsedOurBody = status === 400 || status === 422
+
+  // The control got the same answer: the response says nothing about routing.
+  if (authLike && control === status) return { kind: 'inconclusive', status }
+
+  // It read our body and complained about its contents — the route is real and
+  // speaks something request-shaped.
+  if (parsedOurBody && control !== status) return { kind: 'anthropic', status }
+  if (authLike) return { kind: 'anthropic', status }
+  if (status >= 200 && status < 300) return { kind: 'anthropic', status }
 
   if (status === 404 || status === 405) {
     // Might be an OpenAI-format endpoint. Worth distinguishing, because the fix is
@@ -42,6 +62,16 @@ export async function probeEndpoint(baseUrl: string, fetchImpl: typeof fetch = f
   }
 
   return { kind: 'unknown', status }
+}
+
+async function post(url: string, fetchImpl: typeof fetch): Promise<number> {
+  const res = await fetchImpl(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(TIMEOUT),
+  })
+  return res.status
 }
 
 async function looksOpenAI(baseUrl: string, fetchImpl: typeof fetch): Promise<boolean> {
