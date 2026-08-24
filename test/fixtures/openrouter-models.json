@@ -1,0 +1,692 @@
+{
+ "data": [
+  {
+   "id": "z-ai/glm-5.3",
+   "canonical_slug": "z-ai/glm-5.3-20260816",
+   "hugging_face_id": null,
+   "name": "Z.ai: GLM 5.3",
+   "created": 1787086655,
+   "description": "GLM-5.3 is a large-scale reasoning model from Z.ai, built for complex software engineering and long-horizon agent tasks. It supports text input and output with a 1M-token context window, and improves...",
+   "context_length": 1048576,
+   "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.0000014",
+    "completion": "0.0000044",
+    "input_cache_read": "0.00000026"
+   },
+   "top_provider": {
+    "context_length": 1048576,
+    "max_completion_tokens": 131072,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p"
+   ],
+   "default_parameters": {
+    "temperature": 1,
+    "top_p": 0.95
+   },
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": "2098-12-31",
+   "links": {
+    "details": "/api/v1/models/z-ai/glm-5.3-20260816/endpoints"
+   },
+   "benchmarks": {
+    "design_arena": [],
+    "artificial_analysis": {
+     "intelligence_index": 59.5,
+     "coding_index": 74.8,
+     "agentic_index": 59.1
+    }
+   },
+   "reasoning": {
+    "mandatory": true,
+    "default_enabled": true,
+    "supported_efforts": [
+     "max",
+     "high",
+     "low"
+    ],
+    "default_effort": "max"
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k3",
+   "canonical_slug": "moonshotai/kimi-k3-20260715",
+   "hugging_face_id": "moonshotai/Kimi-K3",
+   "name": "MoonshotAI: Kimi K3",
+   "created": 1784215858,
+   "description": "Kimi K3 is a 2.8T parameter open-weight multimodal reasoning model from Moonshot AI. It is suited for complex coding, knowledge work, and long-horizon agentic workflows, and is particularly strong at...",
+   "context_length": 1048576,
+   "architecture": {
+    "modality": "text+image+video->text",
+    "input_modalities": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000003",
+    "completion": "0.000015",
+    "input_cache_read": "0.0000003"
+   },
+   "top_provider": {
+    "context_length": 1048576,
+    "max_completion_tokens": 1048576,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "default_parameters": {
+    "temperature": null,
+    "top_p": 0.95,
+    "top_k": null,
+    "frequency_penalty": null,
+    "presence_penalty": null,
+    "repetition_penalty": null
+   },
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/moonshotai/kimi-k3-20260715/endpoints"
+   },
+   "benchmarks": {
+    "design_arena": [
+     {
+      "arena": "agents",
+      "category": "androidnative",
+      "elo": 1250,
+      "win_rate": 56,
+      "rank": 8
+     },
+     {
+      "arena": "agents",
+      "category": "fullstack",
+      "elo": 1356,
+      "win_rate": 67.9,
+      "rank": 2
+     },
+     {
+      "arena": "agents",
+      "category": "godotgamedev",
+      "elo": 1199,
+      "win_rate": 48.5,
+      "rank": 11
+     },
+     {
+      "arena": "agents",
+      "category": "htmlslides",
+      "elo": 1263,
+      "win_rate": 59.1,
+      "rank": 2
+     },
+     {
+      "arena": "agents",
+      "category": "mobileapps",
+      "elo": 1288,
+      "win_rate": 57.3,
+      "rank": 1
+     },
+     {
+      "arena": "agents",
+      "category": "python-pptxslides",
+      "elo": 1296,
+      "win_rate": 59.6,
+      "rank": 4
+     },
+     {
+      "arena": "agents",
+      "category": "webapps",
+      "elo": 1326,
+      "win_rate": 63,
+      "rank": 2
+     },
+     {
+      "arena": "models",
+      "category": "3d",
+      "elo": 1445,
+      "win_rate": 69.3,
+      "rank": 1
+     },
+     {
+      "arena": "models",
+      "category": "codecategories",
+      "elo": 1407,
+      "win_rate": 66.1,
+      "rank": 1
+     },
+     {
+      "arena": "models",
+      "category": "dataviz",
+      "elo": 1374,
+      "win_rate": 64.7,
+      "rank": 1
+     },
+     {
+      "arena": "models",
+      "category": "gamedev",
+      "elo": 1431,
+      "win_rate": 68.2,
+      "rank": 1
+     },
+     {
+      "arena": "models",
+      "category": "svg",
+      "elo": 1355,
+      "win_rate": 65.6,
+      "rank": 2
+     },
+     {
+      "arena": "models",
+      "category": "uicomponent",
+      "elo": 1377,
+      "win_rate": 63.3,
+      "rank": 1
+     },
+     {
+      "arena": "models",
+      "category": "website",
+      "elo": 1372,
+      "win_rate": 63,
+      "rank": 1
+     }
+    ],
+    "artificial_analysis": {
+     "intelligence_index": 59.7,
+     "coding_index": 76.2,
+     "agentic_index": 54.3
+    }
+   },
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": true,
+    "supported_efforts": [
+     "max",
+     "high",
+     "low"
+    ],
+    "default_effort": "max"
+   }
+  },
+  {
+   "id": "minimax/minimax-m3",
+   "canonical_slug": "minimax/minimax-m3-20260531",
+   "hugging_face_id": "MiniMaxAI/Minimax-M3",
+   "name": "MiniMax: MiniMax M3",
+   "created": 1780245374,
+   "description": "MiniMax-M3 is a multimodal foundation model from MiniMax. It supports text, image, and video inputs with text output, a 1M-token context window, and is suited for long-horizon agentic work, coding,...",
+   "context_length": 1048576,
+   "architecture": {
+    "modality": "text+image+video->text",
+    "input_modalities": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.0000003",
+    "completion": "0.0000012",
+    "input_cache_read": "0.00000006"
+   },
+   "top_provider": {
+    "context_length": 524288,
+    "max_completion_tokens": 512000,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "default_parameters": {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": null,
+    "frequency_penalty": null,
+    "presence_penalty": null,
+    "repetition_penalty": null
+   },
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/minimax/minimax-m3-20260531/endpoints"
+   },
+   "benchmarks": {
+    "design_arena": [
+     {
+      "arena": "agents",
+      "category": "agenticgamedev",
+      "elo": 1178,
+      "win_rate": 49.1,
+      "rank": 13
+     },
+     {
+      "arena": "agents",
+      "category": "androidnative",
+      "elo": 1178,
+      "win_rate": 46.8,
+      "rank": 22
+     },
+     {
+      "arena": "agents",
+      "category": "fullstack",
+      "elo": 1222,
+      "win_rate": 50.1,
+      "rank": 15
+     },
+     {
+      "arena": "agents",
+      "category": "htmlslides",
+      "elo": 1181,
+      "win_rate": 44.9,
+      "rank": 12
+     },
+     {
+      "arena": "agents",
+      "category": "mobileapps",
+      "elo": 1215,
+      "win_rate": 48.7,
+      "rank": 14
+     },
+     {
+      "arena": "agents",
+      "category": "python-pptxslides",
+      "elo": 1241,
+      "win_rate": 49.5,
+      "rank": 10
+     },
+     {
+      "arena": "agents",
+      "category": "webapps",
+      "elo": 1231,
+      "win_rate": 49.1,
+      "rank": 18
+     },
+     {
+      "arena": "models",
+      "category": "3d",
+      "elo": 1257,
+      "win_rate": 52.6,
+      "rank": 31
+     },
+     {
+      "arena": "models",
+      "category": "asciiart",
+      "elo": 1183,
+      "win_rate": 47.1,
+      "rank": 25
+     },
+     {
+      "arena": "models",
+      "category": "codecategories",
+      "elo": 1275,
+      "win_rate": 52.8,
+      "rank": 26
+     },
+     {
+      "arena": "models",
+      "category": "dataviz",
+      "elo": 1256,
+      "win_rate": 52,
+      "rank": 29
+     },
+     {
+      "arena": "models",
+      "category": "gamedev",
+      "elo": 1247,
+      "win_rate": 47.9,
+      "rank": 34
+     },
+     {
+      "arena": "models",
+      "category": "svg",
+      "elo": 1211,
+      "win_rate": 49.3,
+      "rank": 28
+     },
+     {
+      "arena": "models",
+      "category": "uicomponent",
+      "elo": 1274,
+      "win_rate": 52.8,
+      "rank": 28
+     },
+     {
+      "arena": "models",
+      "category": "website",
+      "elo": 1279,
+      "win_rate": 53.4,
+      "rank": 25
+     }
+    ],
+    "artificial_analysis": {
+     "intelligence_index": 45.4,
+     "coding_index": 58.6,
+     "agentic_index": 36.1
+    }
+   },
+   "reasoning": {
+    "mandatory": false
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-pro",
+   "canonical_slug": "deepseek/deepseek-v4-pro-20260423",
+   "hugging_face_id": "deepseek-ai/DeepSeek-V4-Pro",
+   "name": "DeepSeek: DeepSeek V4 Pro 0423",
+   "created": 1777000679,
+   "description": "DeepSeek V4 Pro is a large-scale Mixture-of-Experts model from DeepSeek with 1.6T total parameters and 49B activated parameters, supporting a 1M-token context window. It is designed for advanced reasoning, coding,...",
+   "context_length": 1048576,
+   "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "DeepSeek",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000526176",
+    "completion": "0.000001052352",
+    "input_cache_read": "0.000000043848"
+   },
+   "top_provider": {
+    "context_length": 1024000,
+    "max_completion_tokens": 384000,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "default_parameters": {
+    "temperature": 1,
+    "top_p": 1
+   },
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/deepseek/deepseek-v4-pro-20260423/endpoints"
+   },
+   "benchmarks": {
+    "design_arena": [
+     {
+      "arena": "agents",
+      "category": "fullstack",
+      "elo": 948,
+      "win_rate": 22.1,
+      "rank": 40
+     },
+     {
+      "arena": "agents",
+      "category": "godotgamedev",
+      "elo": 1059,
+      "win_rate": 34,
+      "rank": 27
+     },
+     {
+      "arena": "agents",
+      "category": "webapps",
+      "elo": 1000,
+      "win_rate": 26.4,
+      "rank": 36
+     },
+     {
+      "arena": "models",
+      "category": "3d",
+      "elo": 1302,
+      "win_rate": 57.6,
+      "rank": 16
+     },
+     {
+      "arena": "models",
+      "category": "asciiart",
+      "elo": 1177,
+      "win_rate": 46.8,
+      "rank": 30
+     },
+     {
+      "arena": "models",
+      "category": "codecategories",
+      "elo": 1267,
+      "win_rate": 52.8,
+      "rank": 31
+     },
+     {
+      "arena": "models",
+      "category": "dataviz",
+      "elo": 1221,
+      "win_rate": 48.6,
+      "rank": 44
+     },
+     {
+      "arena": "models",
+      "category": "gamedev",
+      "elo": 1269,
+      "win_rate": 54,
+      "rank": 28
+     },
+     {
+      "arena": "models",
+      "category": "svg",
+      "elo": 1178,
+      "win_rate": 45.9,
+      "rank": 42
+     },
+     {
+      "arena": "models",
+      "category": "uicomponent",
+      "elo": 1250,
+      "win_rate": 51.2,
+      "rank": 36
+     },
+     {
+      "arena": "models",
+      "category": "website",
+      "elo": 1255,
+      "win_rate": 51.3,
+      "rank": 35
+     }
+    ],
+    "artificial_analysis": {
+     "intelligence_index": 45.3,
+     "coding_index": 59.4,
+     "agentic_index": 37.8
+    }
+   },
+   "reasoning": {
+    "mandatory": false,
+    "supported_efforts": [
+     "xhigh",
+     "high"
+    ],
+    "default_effort": "high"
+   }
+  },
+  {
+   "id": "tencent/hy-mt2-1.8b",
+   "canonical_slug": "tencent/hy-mt2-1.8b-20260521",
+   "hugging_face_id": "tencent/Hy-MT2-1.8B",
+   "name": "Tencent: Hy-MT2-1.8B",
+   "created": 1787231581,
+   "description": "Hy-MT2-1.8B is a compact 1.8B-parameter translation model from Tencent. It supports 33 language pairs and five Chinese dialect and minority-language pairs, with workflows for structured, delimiter-based, contextual, glossary-based, and style-guided...",
+   "context_length": 8192,
+   "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000044",
+    "completion": "0.000000177"
+   },
+   "top_provider": {
+    "context_length": 8192,
+    "max_completion_tokens": 4096,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "max_completion_tokens",
+    "max_tokens",
+    "stop",
+    "temperature"
+   ],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/tencent/hy-mt2-1.8b-20260521/endpoints"
+   }
+  },
+  {
+   "id": "tencent/hy-mt2-30b-a3b",
+   "canonical_slug": "tencent/hy-mt2-30b-a3b-20260521",
+   "hugging_face_id": "tencent/Hy-MT2-30B-A3B",
+   "name": "Tencent: Hy-MT2-30B-A3B",
+   "created": 1787231561,
+   "description": "Hy-MT2-30B-A3B is Tencent's flagship translation model in the Hy-MT2 family. It supports 33 language pairs and five Chinese dialect and minority-language pairs, with workflows for structured, delimiter-based, contextual, glossary-based, and...",
+   "context_length": 8192,
+   "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "pricing": {
+    "prompt": "0.000000074",
+    "completion": "0.000000295"
+   },
+   "top_provider": {
+    "context_length": 8192,
+    "max_completion_tokens": 4096,
+    "is_moderated": false
+   },
+   "per_request_limits": null,
+   "supported_parameters": [
+    "max_completion_tokens",
+    "max_tokens",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "temperature"
+   ],
+   "default_parameters": {},
+   "supported_voices": null,
+   "knowledge_cutoff": null,
+   "expiration_date": null,
+   "links": {
+    "details": "/api/v1/models/tencent/hy-mt2-30b-a3b-20260521/endpoints"
+   }
+  }
+ ]
+}

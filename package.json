@@ -1,0 +1,24 @@
+{
+  "name": "ccprovider",
+  "version": "0.1.0",
+  "description": "Provider profiles for Claude Code — run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
+  "keywords": ["claude-code", "deepseek", "openrouter", "anthropic", "cli", "llm"],
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=20.11" },
+  "bin": { "ccprovider": "dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
