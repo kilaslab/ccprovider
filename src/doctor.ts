@@ -19,7 +19,7 @@ export async function runDoctor(
   profile: Profile,
   paths: Paths,
   secrets: SecretStore,
-  opts: { skipNetwork?: boolean } = {},
+  opts: { skipNetwork?: boolean; fetchImpl?: typeof fetch } = {},
 ): Promise<Check[]> {
   const checks: Check[] = []
   const dir = profileDir(paths, name)
@@ -70,7 +70,7 @@ export async function runDoctor(
   if (opts.skipNetwork || !key) return checks
 
   // --- endpoint
-  const verdict = await probeEndpoint(profile.baseUrl)
+  const verdict = await probeEndpoint(profile.baseUrl, opts.fetchImpl)
   checks.push({
     label: 'endpoint format',
     status: verdict.kind === 'anthropic' ? 'ok' : 'fail',
@@ -86,7 +86,7 @@ export async function runDoctor(
   const probes = await Promise.all(
     slots
       .filter((s) => profile.aliases[s])
-      .map(async (slot) => ({ slot, model: profile.aliases[slot]!, result: await probeModel(profile.baseUrl, key, profile.aliases[slot]!) })),
+      .map(async (slot) => ({ slot, model: profile.aliases[slot]!, result: await probeModel(profile.baseUrl, key, profile.aliases[slot]!, opts.fetchImpl) })),
   )
   for (const { slot, model, result } of probes) {
     checks.push({

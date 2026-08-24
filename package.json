@@ -5,8 +5,12 @@
   "keywords": ["claude-code", "deepseek", "openrouter", "anthropic", "cli", "llm"],
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=20.11" },
-  "bin": { "ccprovider": "dist/cli.js" },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "bin": {
+    "ccprovider": "dist/cli.js"
+  },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
@@ -18,7 +22,9 @@
     "@clack/prompts": "^1.7.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.0",
     "@types/node": "^22.10.0",
+    "bun-types": "^1.4.0",
     "typescript": "^5.7.0"
   }
 }

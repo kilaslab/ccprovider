@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildEnv, resolveModel, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS } from '../src/launch.js'
+import { buildEnv, resolveModel, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS, MANAGED_VARS } from '../src/launch.js'
 import { findPreset } from '../src/presets.js'
 import type { Profile } from '../src/types.js'
 
@@ -12,11 +12,12 @@ const deepseek: Profile = {
     subagent: 'deepseek-v4-flash',
   },
   defaultModel: 'deepseek-v4-pro[1m]',
+  contextTokens: 1048576,
   autoCompactWindow: 786432,
   effortLevel: 'max',
 }
 
-const base = (extra: Record<string, string> = {}) => ({ PATH: '/usr/bin', HOME: '/home/u', ...extra })
+const base = (extra: Record<string, string> = {}): Record<string, string> => ({ PATH: '/usr/bin', HOME: '/home/u', ...extra })
 
 const build = (profile: Profile, over: Partial<Parameters<typeof buildEnv>[0]> = {}) =>
   buildEnv({
@@ -118,6 +119,50 @@ describe('conflicting inherited vars', () => {
   })
 })
 
+describe('buildEnv owns its whole namespace', () => {
+  // Regression: buildEnv only *set* slots the profile mapped, so an inherited
+  // ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5 survived into the child — the tool
+  // producing the exact silent 404 it exists to prevent. Anyone who configured Claude
+  // Code by hand before installing this has those exported.
+  const inheritEverything = () =>
+    Object.fromEntries(MANAGED_VARS.map((v) => [v, `inherited-${v}`])) as Record<string, string>
+
+  test('an unmapped slot ends up unset, never inherited', () => {
+    const sparse: Profile = { ...deepseek, aliases: { opus: 'x', sonnet: 'x', subagent: 'x' } }
+    const env = build(sparse, { baseEnv: base(inheritEverything()) })
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined()
+    expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBeUndefined()
+  })
+
+  test('null tuning values end up unset, never inherited', () => {
+    const bare: Profile = { ...deepseek, autoCompactWindow: null, maxOutputTokens: null, effortLevel: null }
+    const env = build(bare, { baseEnv: base(inheritEverything()) })
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
+    expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined()
+    expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined()
+  })
+
+  test('no managed variable ever survives from the parent environment', () => {
+    // The invariant, stated once: for a profile that sets nothing, every managed name
+    // is either absent or a value this profile produced — never "inherited-*".
+    const empty: Profile = { baseUrl: 'https://x.dev', aliases: { opus: 'only-model' } }
+    const env = build(empty, { baseEnv: base(inheritEverything()) })
+    for (const name of MANAGED_VARS) {
+      if (env[name] !== undefined) expect(env[name]).not.toStartWith('inherited-')
+    }
+  })
+
+  test('a Claude subscription token never reaches a third-party endpoint', () => {
+    const env = build(deepseek, { baseEnv: base({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-xxx' }) })
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  test('headers configured for Anthropic are not replayed to another provider', () => {
+    const env = build(deepseek, { baseEnv: base({ ANTHROPIC_CUSTOM_HEADERS: 'X-Org: acme' }) })
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined()
+  })
+})
+
 describe('model selection', () => {
   test('defaults to defaultModel', () => {
     expect(build(deepseek).ANTHROPIC_MODEL).toBe('deepseek-v4-pro[1m]')
@@ -148,8 +193,24 @@ describe('window and output settings', () => {
     expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBe('max')
   })
 
+  test('the real context window is declared, not just the compaction point', () => {
+    // Claude Code assumes 200k for any model ID it does not recognise — which is every
+    // third-party ID — and truncates to it. Verified against the real binary, which
+    // warns: "not a model this version of Claude Code recognizes, so auto-compact will
+    // keep this session within 200k tokens".
+    expect(build(deepseek).CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('1048576')
+  })
+
+  test('a sub-1M model gets its true window, which [1m] could not express', () => {
+    const kimi: Profile = { ...deepseek, contextTokens: 262144, autoCompactWindow: 196608 }
+    const env = build(kimi)
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('262144')
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('196608')
+  })
+
   test('null settings are omitted rather than sent as "null"', () => {
-    const env = build({ ...deepseek, autoCompactWindow: null, maxOutputTokens: null, effortLevel: null })
+    const env = build({ ...deepseek, contextTokens: null, autoCompactWindow: null, maxOutputTokens: null, effortLevel: null })
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined()
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
     expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined()
     expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined()
@@ -189,6 +250,7 @@ describe('every shipped preset produces a working environment', () => {
       baseUrl: preset.baseUrl,
       aliases: preset.aliases ?? {},
       defaultModel: preset.defaultModel ?? null,
+      contextTokens: preset.contextTokens ?? null,
       autoCompactWindow: preset.autoCompactWindow ?? null,
     }
     expect(missingSlots(profile)).toEqual([])
@@ -196,5 +258,7 @@ describe('every shipped preset produces a working environment', () => {
     expect(env.ANTHROPIC_BASE_URL).toStartWith('https://')
     expect(env.ANTHROPIC_MODEL).toBeTruthy()
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBeTruthy()
+    // Without this every preset silently truncates to Claude Code's assumed 200k.
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeTruthy()
   })
 })

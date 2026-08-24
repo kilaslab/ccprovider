@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getPaths } from '../paths.js'
 import type { SecretStore } from './index.js'
@@ -27,11 +27,22 @@ export class FileStore implements SecretStore {
     mkdirSync(dirname(this.keyPath), { recursive: true })
     if (!existsSync(this.keyPath)) {
       const k = randomBytes(32)
-      writeFileSync(this.keyPath, k.toString('base64'), { mode: 0o600 })
-      chmodSync(this.keyPath, 0o600)
+      writeAtomic(this.keyPath, k.toString('base64'))
       return k
     }
-    return Buffer.from(readFileSync(this.keyPath, 'utf8').trim(), 'base64')
+    const k = Buffer.from(readFileSync(this.keyPath, 'utf8').trim(), 'base64')
+    // A truncated or zero-byte key file (an interrupted first write, a stray `touch`)
+    // would otherwise make every get() return null — surfacing as the misleading
+    // "no API key stored" — and every set() throw a raw RangeError.
+    if (k.length !== 32) {
+      throw new Error(
+        `${this.keyPath} is corrupt (${k.length} bytes, expected 32). Delete it and ` +
+          `re-enter your keys with \`ccprovider edit <name>\` — the stored values cannot be recovered without it.`,
+      )
+    }
+    // Repair permissions on a pre-existing file, not just a freshly created one.
+    chmodSync(this.keyPath, 0o600)
+    return k
   }
 
   private read(): Record<string, string> {
@@ -45,8 +56,9 @@ export class FileStore implements SecretStore {
 
   private write(v: Record<string, string>): void {
     mkdirSync(dirname(this.vaultPath), { recursive: true })
-    writeFileSync(this.vaultPath, JSON.stringify(v, null, 2), { mode: 0o600 })
-    chmodSync(this.vaultPath, 0o600)
+    // Write-then-rename: this file holds every profile's key, so a crash mid-write
+    // must not lose all of them at once.
+    writeAtomic(this.vaultPath, JSON.stringify(v, null, 2))
   }
 
   async get(account: string): Promise<string | null> {
@@ -77,4 +89,11 @@ export class FileStore implements SecretStore {
     delete vault[account]
     this.write(vault)
   }
+}
+
+function writeAtomic(path: string, contents: string): void {
+  const tmp = `${path}.tmp`
+  writeFileSync(tmp, contents, { mode: 0o600 })
+  chmodSync(tmp, 0o600)
+  renameSync(tmp, path)
 }

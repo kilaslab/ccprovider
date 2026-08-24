@@ -16,6 +16,7 @@ export async function runWizard(
   paths: Paths,
   existing: { name: string; profile: Profile; apiKey: string | null } | null,
   takenNames: string[],
+  refresh = false,
 ): Promise<WizardResult> {
   p.intro(existing ? `Edit profile "${existing.name}"` : 'Add a Claude Code provider')
 
@@ -40,17 +41,37 @@ export async function runWizard(
             placeholder: presetId as string,
             defaultValue: presetId as string,
             validate: (v) => {
-              const n = v || (presetId as string)
-              if (takenNames.includes(n)) return `"${n}" already exists — pick another name or run \`ccprovider edit ${n}\`.`
-              try { validateName(n) } catch (e) { return (e as Error).message }
+              const raw = v || (presetId as string)
+              let n: string
+              try { n = validateName(raw) } catch (e) { return (e as Error).message }
+              // Case-insensitive: "DeepSeek" and "deepseek" would share one directory.
+              if (takenNames.some((t) => t.toLowerCase() === n)) {
+                return `"${n}" already exists — pick another name or run \`ccprovider edit ${n}\`.`
+              }
             },
           }),
         ) || (presetId as string),
       )
 
   // ---- 3. base URL
+  //
+  // In edit mode always offer it: the stored provider may not match the one just
+  // selected (a hand-written profile has no `preset` field, so the select is shown),
+  // and silently keeping the old URL produced a profile stamped with one provider
+  // while pointing at another.
   let baseUrl = existing?.profile.baseUrl ?? preset?.baseUrl ?? ''
-  if (!baseUrl || presetId === 'custom') {
+  if (existing && preset && preset.baseUrl && preset.baseUrl !== baseUrl && presetId !== 'custom') {
+    const usePreset = orCancel(
+      await p.select({
+        message: `"${preset.label}" normally uses a different endpoint`,
+        options: [
+          { value: 'preset', label: preset.baseUrl, hint: 'the preset default' },
+          { value: 'keep', label: baseUrl, hint: 'what this profile has now' },
+        ],
+      }),
+    )
+    if (usePreset === 'preset') baseUrl = preset.baseUrl
+  } else if (!baseUrl || presetId === 'custom') {
     baseUrl = orCancel(
       await p.text({
         message: 'Anthropic-format base URL',
@@ -99,28 +120,29 @@ export async function runWizard(
 
   // ---- 5. key
   const apiKey = existing?.apiKey
-    ? orCancel(await p.password({ message: 'API key', mask: '•' })) || existing.apiKey
+    ? orCancel(await p.password({ message: 'API key (blank keeps the current one)', mask: '•' })) || existing.apiKey
     : orCancel(await p.password({ message: 'API key', mask: '•', validate: (v) => ((v ?? '').trim() ? undefined : 'Required') }))
 
   // ---- 6. models
-  const catalog = await loadCatalog(preset, paths, apiKey)
-  const { aliases, defaultModel, autoCompactWindow, maxOutputTokens } = await chooseModels(
+  const catalog = await loadCatalog(preset, paths, apiKey, refresh)
+  const { aliases, defaultModel, contextTokens, autoCompactWindow, maxOutputTokens } = await chooseModels(
     catalog,
     preset,
     existing?.profile,
   )
 
   // ---- 7. effort
-  const effortLevel = preset?.effortLevel ?? existing?.profile.effortLevel ?? null
+  const effortLevel = existing?.profile.effortLevel ?? preset?.effortLevel ?? null
 
   const profile: Profile = {
     baseUrl,
     aliases,
     defaultModel,
+    contextTokens,
     autoCompactWindow,
     maxOutputTokens,
     effortLevel,
-    blankApiKey: preset?.blankApiKey ?? existing?.profile.blankApiKey ?? false,
+    blankApiKey: existing?.profile.blankApiKey ?? preset?.blankApiKey ?? false,
     preset: presetId as string,
     createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
   }
@@ -132,6 +154,7 @@ export async function runWizard(
       `sonnet     ${aliases.sonnet}`,
       `haiku      ${aliases.haiku}`,
       `subagent   ${aliases.subagent}`,
+      contextTokens ? `context    ${contextTokens.toLocaleString()} tokens` : '',
       autoCompactWindow ? `compact at ${autoCompactWindow.toLocaleString()} tokens` : '',
     ].filter(Boolean).join('\n'),
     name,
@@ -143,14 +166,14 @@ export async function runWizard(
   return { name, profile, apiKey }
 }
 
-async function loadCatalog(preset: Preset | undefined, paths: Paths, apiKey: string): Promise<ModelInfo[] | null> {
+async function loadCatalog(preset: Preset | undefined, paths: Paths, apiKey: string, refresh: boolean): Promise<ModelInfo[] | null> {
   if (!preset?.modelsUrl) return null
   const s = p.spinner()
   s.start('Fetching model list')
   try {
     const models =
       preset.liveCatalog === 'openrouter'
-        ? await fetchOpenRouterCatalog({ cacheDir: paths.cacheDir })
+        ? await fetchOpenRouterCatalog({ cacheDir: paths.cacheDir, refresh })
         : await fetchGenericCatalog(preset.modelsUrl, apiKey)
     const usable = toolCapable(models)
     const dropped = models.length - usable.length
@@ -219,15 +242,29 @@ async function chooseModels(
     : { opus: main, sonnet: main, haiku: fast, subagent: fast }
 
   const mainInfo = catalog?.find((m) => m.id === aliases.opus)
-  const suggestedWindow =
-    mainInfo?.contextLength != null
-      ? compactWindowFor(mainInfo.contextLength)
-      : (existing?.autoCompactWindow ?? preset?.autoCompactWindow ?? null)
+  const suggestedContext =
+    mainInfo?.contextLength ?? existing?.contextTokens ?? preset?.contextTokens ?? null
+
+  // Claude Code assumes 200k for any model ID it does not recognise, so getting this
+  // right is the difference between using a 262k model fully and losing a quarter of it.
+  const contextStr = orCancel(
+    await p.text({
+      message: "Model's context window (tokens)",
+      initialValue: suggestedContext ? String(suggestedContext) : '',
+      placeholder: 'blank if unknown — Claude Code will assume 200k',
+      validate: (v) => (!v || /^\d+$/.test(v) ? undefined : 'Digits only'),
+    }),
+  )
+  const contextTokens = contextStr ? Number(contextStr) : null
+
+  const suggestedCompact = contextTokens
+    ? compactWindowFor(contextTokens)
+    : (existing?.autoCompactWindow ?? preset?.autoCompactWindow ?? null)
 
   const windowStr = orCancel(
     await p.text({
       message: 'Auto-compact at (tokens)',
-      initialValue: suggestedWindow ? String(suggestedWindow) : '',
+      initialValue: suggestedCompact ? String(suggestedCompact) : '',
       placeholder: 'blank to use Claude Code defaults',
       validate: (v) => (!v || /^\d+$/.test(v) ? undefined : 'Digits only'),
     }),
@@ -236,7 +273,8 @@ async function chooseModels(
   return {
     aliases,
     defaultModel: aliases.opus,
+    contextTokens,
     autoCompactWindow: windowStr ? Number(windowStr) : null,
-    maxOutputTokens: mainInfo?.maxOutput ?? existing?.maxOutputTokens ?? preset?.maxOutputTokens ?? null,
+    maxOutputTokens: existing?.maxOutputTokens ?? mainInfo?.maxOutput ?? preset?.maxOutputTokens ?? null,
   }
 }

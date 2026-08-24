@@ -8,8 +8,8 @@ import { reconcileLinks, removeProfileDir } from './configdir.js'
 import { buildEnv, describeEnv, findClaude, missingSlots, LaunchError } from './launch.js'
 import { detectStore } from './secrets/index.js'
 import { runDoctor, worstStatus, type Check } from './doctor.js'
-import { runWizard } from './tui/wizard.js'
 import { p } from './tui/prompts.js'
+import { shellQuote } from './shell.js'
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -64,12 +64,12 @@ async function main(argv: string[]): Promise<number> {
   const secrets = await detectStore()
 
   switch (cmd) {
-    case 'add': return cmdAdd(paths, secrets)
+    case 'add': return cmdAdd(paths, secrets, values.refresh)
     case 'ls': case 'list': return cmdList(paths, secrets)
     case 'use': return cmdUse(paths, secrets, requireName(name, 'use'), values.model ?? null, passthrough)
-    case 'edit': return cmdEdit(paths, secrets, requireName(name, 'edit'))
+    case 'edit': return cmdEdit(paths, secrets, requireName(name, 'edit'), values.refresh)
     case 'rm': case 'remove': return cmdRemove(paths, secrets, requireName(name, 'rm'), values.yes)
-    case 'doctor': return cmdDoctor(paths, secrets, name)
+    case 'doctor': return cmdDoctor(paths, secrets, name ? validateName(name) : undefined)
     case 'env': return cmdEnv(paths, secrets, requireName(name, 'env'))
     default:
       console.error(`Unknown command "${cmd}".\n`)
@@ -83,12 +83,15 @@ function requireName(name: string | undefined, cmd: string): string {
     console.error(`\`ccprovider ${cmd}\` needs a profile name. Run \`ccprovider ls\` to see them.`)
     process.exit(1)
   }
-  return name
+  // Normalised here so every downstream use — store lookup, profile dir, keychain
+  // account — agrees on one spelling.
+  return validateName(name)
 }
 
-async function cmdAdd(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>): Promise<number> {
+async function cmdAdd(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>, refresh: boolean): Promise<number> {
   const store = loadStore(paths)
-  const result = await runWizard(paths, null, Object.keys(store.providers))
+  const { runWizard } = await import('./tui/wizard.js')
+  const result = await runWizard(paths, null, Object.keys(store.providers), refresh)
   store.providers[result.name] = result.profile
   saveStore(paths, store)
   await secrets.set(result.name, result.apiKey)
@@ -98,11 +101,12 @@ async function cmdAdd(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retur
   return 0
 }
 
-async function cmdEdit(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>, name: string): Promise<number> {
+async function cmdEdit(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>, name: string, refresh: boolean): Promise<number> {
   const store = loadStore(paths)
   const profile = getProfile(store, name)
   const apiKey = await secrets.get(name)
-  const result = await runWizard(paths, { name, profile, apiKey }, [])
+  const { runWizard } = await import('./tui/wizard.js')
+  const result = await runWizard(paths, { name, profile, apiKey }, [], refresh)
   store.providers[name] = result.profile
   saveStore(paths, store)
   await secrets.set(name, result.apiKey)
@@ -125,7 +129,9 @@ async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retu
     const flag = !hasKey ? c.red('no key') : missing.length ? c.yellow(`unmapped: ${missing.join(',')}`) : c.green('ready')
     console.log(`${c.bold(n.padEnd(14))} ${flag}`)
     console.log(`  ${c.dim(pr.baseUrl)}`)
-    console.log(`  ${c.dim(`opus/sonnet ${pr.aliases.opus ?? '—'} · haiku/subagent ${pr.aliases.haiku ?? '—'}`)}`)
+    const a = pr.aliases
+    const pair = (x?: string, y?: string) => (x === y ? (x ?? '—') : `${x ?? '—'} / ${y ?? '—'}`)
+    console.log(`  ${c.dim(`opus+sonnet ${pair(a.opus, a.sonnet)} · haiku+subagent ${pair(a.haiku, a.subagent)}`)}`)
   }
   return 0
 }
@@ -171,6 +177,11 @@ async function cmdUse(
 
   // Node < 24 has no execve; spawn in the same process group instead.
   const r = spawnSync(claude, passthrough, { stdio: 'inherit', env })
+  if (r.error) {
+    // e.g. claude was removed or lost the executable bit between `which` and spawn
+    console.error(c.red(`Could not launch ${claude}: ${r.error.message}`))
+    return 1
+  }
   if (r.signal) process.kill(process.pid, r.signal)
   return r.status ?? 1
 }
@@ -183,7 +194,6 @@ async function cmdRemove(
 ): Promise<number> {
   const store = loadStore(paths)
   getProfile(store, name)
-  validateName(name)
   const dir = profileDir(paths, name)
 
   if (!yes) {
@@ -242,7 +252,7 @@ async function cmdEnv(
   // Redacted when a human is looking; real values when piped into `eval`.
   const shown = process.stdout.isTTY ? describeEnv(env) : env
   for (const [k, v] of Object.entries(shown)) {
-    console.log(`export ${k}=${JSON.stringify(v)}`)
+    console.log(`export ${k}=${shellQuote(v)}`)
   }
   if (process.stdout.isTTY) console.error(c.dim('\n# token redacted for display; pipe to `eval` for the real values'))
   return 0

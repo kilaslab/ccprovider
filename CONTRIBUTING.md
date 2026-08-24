@@ -27,6 +27,14 @@ the user's real `~/.claude`. `test/configdir.test.ts` has a test named
 `THE SAFETY TEST` that builds a populated fake config, links a profile at it, removes the
 profile, and asserts every original file survived. Don't weaken it.
 
+## Context windows
+
+A preset needs `contextTokens` (the model's true window) as well as `autoCompactWindow`
+(where compaction fires, conventionally 75% of it). Claude Code assumes 200k for any
+model ID it does not recognise, so omitting `contextTokens` silently truncates the model.
+You can see it decide: run `claude --print hi` through a profile and watch for
+`[claude-code:unrecognized_model]`.
+
 ## Adding a provider preset
 
 Add an entry to `src/presets.ts` with a base URL you have actually probed:

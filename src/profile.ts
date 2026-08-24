@@ -37,7 +37,16 @@ export function validateStore(raw: unknown, source = 'config'): ProfileStore {
 
   const out: Record<string, Profile> = {}
   for (const [name, value] of Object.entries(providers as Record<string, unknown>)) {
-    out[name] = validateProfile(value, `${source}: profile "${name}"`)
+    // Validate the key, not just the value: it becomes a directory name and a keychain
+    // account, and reaches mkdir/symlink through profileDir().
+    const key = validateName(name)
+    if (key in out) {
+      throw new ProfileError(
+        `${source}: "${name}" collides with another profile once case is normalised. ` +
+          `Rename one of them in ${source}.`,
+      )
+    }
+    out[key] = validateProfile(value, `${source}: profile "${name}"`)
   }
   return { version: 1, providers: out }
 }
@@ -68,6 +77,7 @@ export function validateProfile(raw: unknown, where: string): Profile {
     baseUrl: p.baseUrl,
     aliases,
     defaultModel: optionalString(p.defaultModel, `${where}: defaultModel`),
+    contextTokens: optionalNumber(p.contextTokens, `${where}: contextTokens`),
     autoCompactWindow: optionalNumber(p.autoCompactWindow, `${where}: autoCompactWindow`),
     maxOutputTokens: optionalNumber(p.maxOutputTokens, `${where}: maxOutputTokens`),
     effortLevel: optionalString(p.effortLevel, `${where}: effortLevel`),
@@ -91,18 +101,27 @@ function optionalNumber(v: unknown, where: string): number | null {
   return v
 }
 
-/** Profile names become directory names and keychain accounts, so keep them boring. */
+/**
+ * Profile names become directory names and keychain accounts, so keep them boring —
+ * and normalise case.
+ *
+ * macOS and Windows filesystems are case-insensitive by default, so "DeepSeek" and
+ * "deepseek" would resolve to one CLAUDE_CONFIG_DIR while being two entries in the
+ * config: exactly the state bleed this tool exists to prevent, and `rm` on either
+ * would destroy the other's session history. Returns the normalised name; callers
+ * must use the return value rather than the argument.
+ */
 export function validateName(name: string): string {
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name)) {
     throw new ProfileError(
       `"${name}" is not a valid profile name. Use letters, digits, dot, dash or underscore (max 64).`,
     )
   }
-  return name
+  return name.toLowerCase()
 }
 
 export function getProfile(store: ProfileStore, name: string): Profile {
-  const p = store.providers[name]
+  const p = store.providers[validateName(name)]
   if (!p) {
     const known = Object.keys(store.providers)
     throw new ProfileError(

@@ -22,6 +22,12 @@ export interface Profile {
   aliases: Partial<Record<AliasSlot, string>>
   /** Model for the session itself. Defaults to the `opus` alias when unset. */
   defaultModel?: string | null
+  /** The model's real context window.
+   *
+   *  Claude Code assumes 200k for any model ID it does not recognise, so without this
+   *  a 262k or 1M model silently gets truncated to 200k. The `[1m]` suffix covers the
+   *  1M case; this covers every other size. */
+  contextTokens?: number | null
   /** Where auto-compaction triggers. Conventionally ~75% of the real context window. */
   autoCompactWindow?: number | null
   maxOutputTokens?: number | null
@@ -56,6 +62,7 @@ export interface Preset {
   sourced?: 'deepseek-official-docs' | 'openrouter-docs' | 'kimi-docs-model-list' | 'catalog-inferred' | 'user-supplied'
   aliases?: Partial<Record<AliasSlot, string>>
   defaultModel?: string
+  contextTokens?: number
   autoCompactWindow?: number
   maxOutputTokens?: number
   effortLevel?: string

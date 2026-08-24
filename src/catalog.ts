@@ -66,8 +66,8 @@ export function parseOpenRouter(raw: unknown): ModelInfo[] {
       maxOutput: numOrNull(r.top_provider?.max_completion_tokens),
       supportsTools: params.includes('tools'),
       supportsImages: modalities.includes('image'),
-      promptPrice: numOrNull(Number(r.pricing?.prompt)),
-      completionPrice: numOrNull(Number(r.pricing?.completion)),
+      promptPrice: numOrNull(Number(r.pricing?.prompt), true),
+      completionPrice: numOrNull(Number(r.pricing?.completion), true),
     }
   })
 }
@@ -110,21 +110,16 @@ export function toolCapable(models: ModelInfo[]): ModelInfo[] {
   return models.filter((m) => m.supportsTools)
 }
 
-export function searchModels(models: ModelInfo[], query: string): ModelInfo[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return models
-  return models.filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q))
-}
-
 export function formatPrice(m: ModelInfo): string {
   if (m.promptPrice == null) return ''
   const perM = (n: number) => `$${(n * 1_000_000).toFixed(2)}`
   return `${perM(m.promptPrice)}/${m.completionPrice != null ? perM(m.completionPrice) : '?'} per M`
 }
 
-function numOrNull(v: unknown): number | null {
+function numOrNull(v: unknown, allowZero = false): number | null {
   const n = typeof v === 'number' ? v : Number(v)
-  return Number.isFinite(n) && n > 0 ? n : null
+  if (!Number.isFinite(n)) return null
+  return allowZero ? (n >= 0 ? n : null) : n > 0 ? n : null
 }
 
 function readCache(file: string, ttl = CACHE_TTL_MS): ModelInfo[] | null {

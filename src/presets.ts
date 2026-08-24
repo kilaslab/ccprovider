@@ -29,6 +29,7 @@ export const PRESETS: Preset[] = [
       subagent: 'deepseek-v4-flash',
     },
     defaultModel: 'deepseek-v4-pro[1m]',
+    contextTokens: 1048576,
     autoCompactWindow: 786432,
     effortLevel: 'max',
   },
@@ -56,6 +57,7 @@ export const PRESETS: Preset[] = [
       subagent: 'kimi-k2.7-code-highspeed',
     },
     defaultModel: 'kimi-k3[1m]',
+    contextTokens: 1048576,
     autoCompactWindow: 786432,
   },
   {
@@ -72,6 +74,7 @@ export const PRESETS: Preset[] = [
       subagent: 'glm-5.2',
     },
     defaultModel: 'glm-5.3',
+    contextTokens: 1048576,
     autoCompactWindow: 786432,
   },
   {
@@ -88,6 +91,7 @@ export const PRESETS: Preset[] = [
       subagent: 'minimax-m2.7',
     },
     defaultModel: 'minimax-m3',
+    contextTokens: 1048576,
     autoCompactWindow: 786432,
   },
   {

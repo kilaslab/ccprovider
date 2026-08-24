@@ -35,9 +35,17 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
 CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash    # ← the one everyone forgets
 ```
 
-**Context window is not one number.** It's the `[1m]` suffix (read per variable, stripped
-before the ID reaches the provider) *plus* `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which
-should sit below the real window to leave headroom.
+**Claude Code assumes 200k for any model it doesn't recognise** — which is every
+third-party model ID. It says so out loud if you look: `[claude-code:unrecognized_model]`.
+Set only `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and a 262k model still gets truncated to 200k.
+The real window has to be declared:
+
+```bash
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576      # the model's true window
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432      # compact below it, for headroom
+```
+
+The `[1m]` suffix covers the 1M case; this covers every other size.
 
 **Not every model can drive an agent.** Of OpenRouter's 400+ models, roughly 70 can't
 tool-call at all. Pick one and Claude Code looks broken rather than telling you why.
@@ -80,6 +88,8 @@ config is never touched.
 | `ccprovider rm <name>` | delete a profile, its key, and its history |
 | `ccprovider doctor [name]` | check everything, end to end |
 | `ccprovider env <name>` | print the exports it would set |
+
+`add` and `edit` take `--refresh` to bypass the 24-hour model-list cache.
 
 `-m` takes a tier (`opus`, `sonnet`, `haiku`) or a raw provider model ID. Anything after
 `--` goes straight to `claude`:
@@ -141,6 +151,10 @@ Keys are never written to `providers.json`. The encrypted-file fallback (headles
 with no keyring) uses AES-256-GCM with a `0600` key file — that keeps secrets out of
 backups and synced dotfiles, but anything running as your user can read it. `doctor`
 tells you which backend is in use.
+
+Profile names are lowercased. macOS and Windows filesystems are case-insensitive, so
+`DeepSeek` and `deepseek` would otherwise share one config directory while being two
+separate entries.
 
 ## Requirements
 

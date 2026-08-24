@@ -18,8 +18,16 @@ export class KeychainStore implements SecretStore {
     try {
       const { stdout } = await run('security', ['find-generic-password', '-s', SERVICE, '-a', account, '-w'])
       return stdout.replace(/\n$/, '')
-    } catch {
-      return null
+    } catch (e) {
+      // 44 is `security`'s "item not found" — a genuine absence. Anything else
+      // (denied access, locked keychain) must not masquerade as "no key stored",
+      // which would send the user to `ccprovider edit` for a permissions problem.
+      const code = (e as { code?: number }).code
+      if (code === 44) return null
+      throw new Error(
+        `Could not read the API key for "${account}" from the macOS Keychain ` +
+          `(security exited ${code ?? '?'}). If you denied the access prompt, run again and allow it.`,
+      )
     }
   }
 

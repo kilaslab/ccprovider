@@ -1,3 +1,5 @@
+import { stripSuffix } from './types.js'
+
 export type EndpointVerdict =
   | { kind: 'anthropic'; status: number }
   | { kind: 'openai-only'; status: number }
@@ -76,7 +78,7 @@ export async function probeModel(
 ): Promise<ModelProbe> {
   // Claude Code strips the [1m] suffix before the ID reaches the provider; so must we,
   // or every suffixed alias would look broken.
-  const id = model.replace(/\[1m\]$/, '')
+  const id = stripSuffix(model)
   try {
     const res = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/v1/messages`, {
       method: 'POST',

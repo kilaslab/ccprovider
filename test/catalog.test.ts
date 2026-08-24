@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { parseOpenRouter, toolCapable, searchModels, formatPrice, fetchGenericCatalog, CatalogError } from '../src/catalog.js'
+import { parseOpenRouter, toolCapable, formatPrice, fetchGenericCatalog, CatalogError } from '../src/catalog.js'
 
 const raw = JSON.parse(readFileSync('test/fixtures/openrouter-models.json', 'utf8'))
 const models = parseOpenRouter(raw)
@@ -42,14 +42,6 @@ describe('the filter that matters', () => {
 
   test('every model the picker would offer can actually drive Claude Code', () => {
     expect(toolCapable(models).find((m) => !m.supportsTools)).toBeUndefined()
-  })
-})
-
-describe('search', () => {
-  test('matches on id and on label', () => {
-    expect(searchModels(models, 'glm').map((m) => m.id)).toContain('z-ai/glm-5.3')
-    expect(searchModels(models, 'kimi').length).toBeGreaterThan(0)
-    expect(searchModels(models, '')).toHaveLength(models.length)
   })
 })
 

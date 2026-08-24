@@ -90,6 +90,39 @@ describe('validation', () => {
   })
 })
 
+describe('name case normalisation', () => {
+  // Regression: validateName accepted mixed case and the wizard's duplicate check was
+  // case-sensitive, so "DeepSeek" and "deepseek" became two config entries sharing one
+  // directory on macOS/Windows. `rm` on either then destroyed the other's history.
+  test('names normalise to lowercase', () => {
+    expect(validateName('DeepSeek')).toBe('deepseek')
+    expect(validateName('OpenRouter')).toBe('openrouter')
+  })
+
+  test('case-variant profiles in a config are rejected, not silently merged', () => {
+    expect(() =>
+      validateStore({
+        version: 1,
+        providers: {
+          deepseek: { baseUrl: 'https://a.dev', aliases: {} },
+          DeepSeek: { baseUrl: 'https://b.dev', aliases: {} },
+        },
+      }),
+    ).toThrow(/collides with another profile once case is normalised/)
+  })
+
+  test('an existing mixed-case config loads under the normalised key', () => {
+    const store = validateStore({ version: 1, providers: { DeepSeek: { baseUrl: 'https://a.dev', aliases: {} } } })
+    expect(Object.keys(store.providers)).toEqual(['deepseek'])
+    expect(() => getProfile(store, 'DeepSeek')).not.toThrow()
+    expect(() => getProfile(store, 'deepseek')).not.toThrow()
+  })
+
+  test('a store key that could escape the profile directory is refused at load', () => {
+    expect(() => validateStore({ version: 1, providers: { '../../evil': { baseUrl: 'https://a.dev', aliases: {} } } })).toThrow(ProfileError)
+  })
+})
+
 describe('getProfile', () => {
   test('unknown name lists what does exist', () => {
     expect(() => getProfile(validateStore(valid), 'nope')).toThrow(/Known profiles: deepseek/)
