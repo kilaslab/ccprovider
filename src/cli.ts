@@ -1,11 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { parseArgs } from 'node:util'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Imported rather than read from disk at runtime: a compiled binary has no package.json
-// beside it, so a runtime read reports "0.0.0" (found the hard way).
-import pkg from '../package.json' with { type: 'json' }
 import { getPaths, profileDir } from './paths.js'
 import { loadStore, saveStore, getProfile, validateName, ProfileError } from './profile.js'
 import { reconcileLinks, removeProfileDir } from './configdir.js'
@@ -75,7 +73,7 @@ async function main(argv: string[]): Promise<number> {
   })
 
   const [cmd, name, name2] = positionals
-  if (values.version) { console.log(pkg.version); return 0 }
+  if (values.version) { console.log(version()); return 0 }
   if (values.help || !cmd || cmd === 'help') { console.log(USAGE); return cmd || values.help ? 0 : 1 }
 
   const paths = getPaths()
@@ -479,6 +477,16 @@ async function cmdEnv(
   }
   if (process.stdout.isTTY) console.error(c.dim('\n# token redacted for display; pipe to `eval` for the real values'))
   return 0
+}
+
+/** package.json sits one directory up from both `dist/cli.js` (installed) and
+ *  `src/cli.ts` (run from a clone), so this finds it either way. */
+function version(): string {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+  } catch {
+    return '0.0.0'
+  }
 }
 
 main(process.argv.slice(2))

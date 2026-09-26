@@ -3,8 +3,8 @@
 ## Supported versions
 
 Only the latest release receives security fixes, and `main` is what the next one is built
-from. ccprovider is at 0.x, so fixes are not backported to earlier releases: upgrade with
-`install.sh`, which installs the latest.
+from. ccprovider is at 0.x, so fixes are not backported to earlier releases: update to the
+latest.
 
 ## Reporting a vulnerability
 
@@ -54,8 +54,9 @@ The tool's own trust boundaries. A report that defeats one of these is a vulnera
   through the symlinks a profile contains, is in scope.
 - **MCP provisioning.** Definitions written into a profile's Claude config, how the key
   reaches those servers, and the pinned package a stdio server runs.
-- **The installer and release artifacts.** `install.sh` verifying what it installs, and
-  the integrity of the published binaries and their attestations.
+- **The published package.** What the release workflow builds and attests, what the npm
+  publish step sends, and anything that would let a tag or a workflow ship code that was not
+  reviewed on `main`.
 
 ## Known limitations
 
@@ -69,9 +70,11 @@ These are understood and documented rather than reportable:
   with a `0600` key file beside the vault, which keeps secrets out of backups and synced
   dotfiles. Anything running as you can read the key file too. `doctor` reports when this
   backend is in use.
-- **A checksum beside a binary is not a signature.** `install.sh` verifies `SHA256SUMS`,
-  which catches corruption and truncation. Detecting a compromised release needs the
-  build-provenance attestation: `gh attestation verify <file> --repo kilaslab/ccprovider`.
+- **Installing from a clone runs the repository's build.** `npm install` in a clone runs the
+  package's `prepare` script (`tsc`) with your permissions, before you have run ccprovider
+  at all. That is the same trust as running the code, but it happens at install time. A
+  tarball from a release is already built and carries a build-provenance attestation:
+  `gh attestation verify <file> --repo kilaslab/ccprovider`.
 - **The vision MCP server is third-party code.** `@z_ai/mcp-server` runs with your key in
   its environment. ccprovider pins its version, but it is Z.ai's package.
 

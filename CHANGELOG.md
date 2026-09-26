@@ -6,6 +6,31 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Distributed as an npm package again, not as compiled binaries.** A compiled binary is
+  the Bun runtime plus about 200 KB of ccprovider (measured: an empty program compiled is
+  59 MB, and no compile flag changes that), against a 44 KB package. It needs Node 20.11+.
+- **Launchers point at the installed `dist/cli.js`** and let its shebang find `node`, instead of
+  baking in the interpreter's path, which changes with every Node version under nvm or fnm.
+
+### Added
+
+- Use without the registry: clone, `npm install && npm link`. `prepare` builds `dist/`.
+- The release workflow packs the tarball, proves it installs and runs under Node, attests its
+  provenance, creates the GitHub release, and publishes to npm when an `NPM_TOKEN` secret exists.
+- CI installs the packed tarball under Node 20, 22 and 24, and a `fresh-install` job does what a
+  user's clone does — `npm install` with the newest dependencies, ignoring `bun.lock`.
+
+### Fixed
+
+- A fresh `npm install` failed to compile against @clack/prompts 1.8 (its cancel marker became a
+  `unique symbol`). `orCancel` is now typed to work with the old and the new typing.
+
+### Removed
+
+- The compiled binaries, `install.sh` and `THIRD_PARTY_NOTICES.md`. They were only ever in 0.1.0.
+
 ## [0.1.0] - 2026-09-26
 
 The first public release.

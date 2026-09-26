@@ -6,9 +6,8 @@
 #
 # The `bun` ecosystem is deliberately absent. Its first run failed in the updater
 # (`update_files`) on this repository, and a permanently red Dependabot run teaches people
-# to ignore the real ones. The one runtime dependency, @clack/prompts, is updated by hand:
-# `bun update`, then `bun run notices` (see CONTRIBUTING.md). Revisit when Dependabot's Bun
-# support catches up with Bun 1.4's lockfile.
+# to ignore the real ones. The one runtime dependency, @clack/prompts, is updated by hand
+# (`bun update`). Revisit when Dependabot's Bun support catches up with Bun 1.4's lockfile.
 version: 2
 
 updates:

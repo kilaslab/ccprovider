@@ -292,17 +292,43 @@ describe('PATH', () => {
 })
 
 describe('selfLauncher', () => {
-  test('a compiled binary is its own launcher — its embedded entry path is not openable', () => {
-    expect(selfLauncher('/opt/ccprovider', '/$bunfs/root/ccprovider')).toEqual(['/opt/ccprovider'])
-    expect(selfLauncher('/opt/ccprovider', '')).toEqual(['/opt/ccprovider'])
+  test('a JavaScript entry is its own launcher — its shebang finds node, so no interpreter path is baked in', () => {
+    // Regression guard: under nvm/fnm process.execPath is a versioned path that disappears
+    // when the user changes Node version, taking every launcher with it.
+    const script = join(home, 'cli.js')
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    expect(selfLauncher('/home/u/.nvm/versions/node/v22.1.0/bin/node', script)).toEqual([realpathSync(script)])
   })
 
-  test('from source it is the runtime plus the real path of the script', () => {
+  test('.mjs and .cjs entries too', () => {
+    for (const ext of ['mjs', 'cjs']) {
+      const script = join(home, `cli.${ext}`)
+      writeFileSync(script, '')
+      expect(selfLauncher('/usr/bin/node', script)).toEqual([realpathSync(script)])
+    }
+  })
+
+  test('from TypeScript source it is the runtime plus the real path of the script', () => {
     const script = join(home, 'cli.ts')
     writeFileSync(script, '')
     const link = join(home, 'link.ts')
     symlinkSync(script, link)
     expect(selfLauncher('/usr/bin/bun', link)).toEqual(['/usr/bin/bun', realpathSync(script)])
+  })
+
+  test('an npm-style bin symlink resolves to the real file inside the package', () => {
+    const pkg = join(home, 'lib/node_modules/ccprovider/dist')
+    mkdirSync(pkg, { recursive: true })
+    const real = join(pkg, 'cli.js')
+    writeFileSync(real, '')
+    mkdirSync(join(home, 'bin-dir'))
+    const bin = join(home, 'bin-dir', 'ccprovider')
+    symlinkSync(real, bin)
+    expect(selfLauncher('/usr/bin/node', bin)).toEqual([realpathSync(real)])
+  })
+
+  test('refuses when it cannot tell how it was started', () => {
+    expect(() => selfLauncher('/usr/bin/node', '')).toThrow(ProfileError)
   })
 })
 

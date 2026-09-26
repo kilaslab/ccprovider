@@ -9,45 +9,51 @@ sharing the skills and plugins you already have. Every profile is also a command
 `glm`, `deepseek`, whatever you named it.
 
 ```bash
-curl -fsSL https://github.com/kilaslab/ccprovider/releases/latest/download/install.sh | sh
+git clone https://github.com/kilaslab/ccprovider && cd ccprovider
+npm install && npm link     # builds it, and puts `ccprovider` on your PATH
+                            # (once it is on npm: `npm install -g ccprovider`)
 
 ccprovider add              # pick a provider, paste a key
 deepseek                    # launches claude, pointed at DeepSeek
 ```
 
-One self-contained binary — no Node, no Bun, no npm. macOS and Linux, arm64 and x64.
-
 No proxy. No request translation. `ccprovider` sets environment variables and `exec`s
 the real `claude` binary — nothing sits in the request path.
 
-<details>
-<summary>Other ways to install</summary>
+## Install
 
-**From source** (needs [Bun](https://bun.sh)):
+Needs **Node 20.11 or newer** on macOS or Linux (WSL works). Bun is only for developing
+ccprovider; you don't need it to use it. It is not on the npm registry yet, so until it
+is, use one of the first two routes — neither touches the registry for ccprovider itself.
+
+**Clone it and use it.** The whole thing, no global install required:
 
 ```bash
 git clone https://github.com/kilaslab/ccprovider && cd ccprovider
-bun install
-bun run install:local       # builds, then installs to ~/.local/bin/ccprovider
+npm install              # fetches the one dependency and builds dist/  (bun install works too)
+node dist/cli.js add     # run it right there
 ```
 
-**By hand.** Download `ccprovider-<os>-<arch>` and `SHA256SUMS` from the
-[releases page](https://github.com/kilaslab/ccprovider/releases), check it with
-`shasum -a 256 -c --ignore-missing SHA256SUMS` (macOS) or
-`sha256sum -c --ignore-missing SHA256SUMS` (Linux), and put it on your `PATH`.
+To have the `ccprovider` command available everywhere, run `npm link` (or `bun link`) in
+the clone once. Updating is `git pull && npm install`. If you'd rather skip the build while
+you change something, `bun run src/cli.ts add` runs the TypeScript as it is.
 
-Every release binary carries a signed build-provenance attestation. To confirm a file
-was built by this repository's release workflow and not just uploaded:
+**A release tarball.** From 0.1.1 on, each [GitHub release](https://github.com/kilaslab/ccprovider/releases)
+carries the packed package, already built, with a build-provenance attestation you can check:
 
 ```bash
-gh attestation verify ccprovider-darwin-arm64 --repo kilaslab/ccprovider
+npm install -g https://github.com/kilaslab/ccprovider/releases/download/vX.Y.Z/ccprovider-X.Y.Z.tgz
+gh attestation verify ccprovider-X.Y.Z.tgz --repo kilaslab/ccprovider     # after downloading it
 ```
 
-`install.sh` checks the checksum on every install. A checksum shipped beside the binary
-catches corruption and truncation; it cannot, on its own, catch a compromised release —
-that is what the attestation is for.
+**From npm**, once it is published there:
 
-</details>
+```bash
+npm install -g ccprovider
+```
+
+After updating any of these, run `ccprovider install` to refresh launcher commands that
+point at the old copy (see below).
 
 ## Why not just export the variables yourself
 
@@ -171,6 +177,12 @@ configuration — it runs `ccprovider use glm -- "$@"`, and that is the one plac
 reads your key and builds the environment. Because it is plain `sh`, it works the same
 from bash, zsh and fish.
 
+It points at the installed `dist/cli.js` and lets that file's shebang find `node` when it
+runs, rather than baking in a Node path: under nvm or fnm that path changes with every
+Node version. What it does depend on is the package staying where it was. If you switch
+Node versions (a global package lives under that version's directory) or move a clone,
+`doctor` reports the launcher as stale and `ccprovider install` refreshes it.
+
 `~/.local/bin` has to be on your `PATH` (Claude Code installs itself there too, so it
 usually is). If it isn't, `add` and `doctor` say so and print the line to add. Nothing
 edits your shell profile for you.
@@ -189,7 +201,7 @@ The commands are careful about what they touch:
 - **A few names can never be commands:** `claude`, `ccprovider`, `which`, `security`,
   `secret-tool`, `node` and `npx` — the programs ccprovider itself looks up on `PATH`. A
   launcher with one of those names would be found first and call itself forever.
-- **`doctor` notices** a command whose binary has moved, one that another program
+- **`doctor` notices** a command whose target has moved, one that another program
   shadows earlier on `PATH`, and leftovers from a deleted profile.
 
 `-m` isn't available through the command (the command owns your arguments). For a
@@ -305,10 +317,9 @@ separate entries.
 
 ## Requirements
 
-macOS or Linux (arm64 or x64, including WSL), and Claude Code on your `PATH`. Nothing
-else: the release binary bundles its runtime. Bun is only needed to build from source.
-Native Windows isn't supported: the profile directories and commands rely on POSIX
-symlinks and `/bin/sh`.
+Node 20.11+ to run, on macOS or Linux (including WSL), plus Claude Code on your `PATH`.
+Bun is only used to develop the project. Native Windows isn't supported: the profile
+directories and commands rely on POSIX symlinks and `/bin/sh`.
 
 ## Is this allowed?
 
@@ -327,6 +338,4 @@ endpoint before proposing a preset. Report vulnerabilities privately, as describ
 
 ## License
 
-[MIT](LICENSE). The release binaries bundle the Bun runtime and a few npm packages; their
-notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships with every
-release.
+[MIT](LICENSE)

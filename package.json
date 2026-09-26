@@ -1,7 +1,6 @@
 {
   "name": "ccprovider",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1",
   "description": "Provider profiles for Claude Code — run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
   "keywords": [
     "claude-code",
@@ -26,17 +25,35 @@
     "url": "https://github.com/kilaslab/ccprovider/issues"
   },
   "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "bin": {
+    "ccprovider": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "bun build src/cli.ts --compile --outfile dist/ccprovider",
-    "build:all": "bun run scripts/build-release.ts",
-    "install:local": "bun run build && mkdir -p \"$HOME/.local/bin\" && cp dist/ccprovider \"$HOME/.local/bin/.ccprovider.tmp\" && mv -f \"$HOME/.local/bin/.ccprovider.tmp\" \"$HOME/.local/bin/ccprovider\"",
-    "notices": "bun run scripts/notices.ts",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepare": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "dev": "bun run src/cli.ts"
   },
   "dependencies": {
-    "@clack/prompts": "^1.7.0"
+    "@clack/prompts": "^1.8.1"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

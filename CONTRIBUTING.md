@@ -1,33 +1,31 @@
 # Contributing
 
 ```bash
-bun install
+bun install             # installs from the lockfile, and builds dist/ (the `prepare` script)
 bun test
 bun run typecheck
 bun run dev ls          # run from source, no build step
-bun run build           # -> dist/ccprovider, a self-contained binary
-bun run install:local   # build, then install to ~/.local/bin/ccprovider
+bun run build           # tsc -> dist/, the package that is published
 ```
 
-Bun is the toolchain and the runtime: the shipped artifact is a binary produced by
-`bun build --compile`, so users need neither Bun nor Node. `bun run build:all`
-cross-compiles all four release targets (macOS and Linux, arm64 and x64) from one machine
-and writes `dist/SHA256SUMS`; CI runs it on every push, so a target that stops
-compiling is caught before a release.
+Bun is the development toolchain: it runs the tests and owns the lockfile. What ships is
+plain JavaScript built by `tsc`, and it runs on Node 20.11+ with no Bun involved — CI's
+`node-compat` job proves that by installing the packed tarball, and a git checkout, under
+Node 20, 22 and 24 and running them. If you reach for a `Bun.*` API in `src/`, that job
+is what will stop you; `test/` may use anything.
 
-`src/` still imports only `node:*` builtins, not `Bun.*`. That is a habit kept for its own
-sake now — it keeps the modules testable with plain injected functions and portable — not
-a compatibility requirement, so if a `Bun.*` API is genuinely the right tool, say why in
-the pull request. `test/` and `scripts/` may use anything.
+`bun install` and `npm install` both run `prepare`, which builds `dist/`. That is what makes
+a plain clone usable before the package is on npm: `npm install && npm link`, or
+`node dist/cli.js`. (`npm install -g github:...` is deliberately not offered: npm's global
+git installs skip devDependencies, so `tsc` is not there to run `prepare`.)
 
-Things that only go wrong in a *compiled* binary are guarded in CI's `build` job. The
-one already found: a binary has no `package.json` beside it, so anything that reads it at
-runtime silently reports a wrong version. `src/cli.ts` imports it instead.
+npm ignores `bun.lock` and resolves the newest matching dependencies, so a user's clone can
+differ from what the tests ran against — that is how @clack/prompts 1.8 broke the build the
+first time this was tried. CI's `fresh-install` job does exactly what a user does, on
+purpose, so upstream drift shows up there rather than in an issue.
 
-Dependencies are updated by hand (`bun update`; Dependabot only keeps the workflow's action
-pins current). When you add or upgrade a runtime dependency, run `bun run notices` and commit the result:
-the binary bundles it, and its license requires the notice to travel along. CI regenerates
-the file and fails if it differs.
+Dependencies are updated by hand (`bun update`); Dependabot only keeps the workflow actions'
+commit-SHA pins current.
 
 ## Layout
 
@@ -35,7 +33,7 @@ the file and fails if it differs.
 |---|---|
 | `src/launch.ts` | `buildEnv()` — the heart. Pure, exhaustively tested. |
 | `src/configdir.ts` | profile dirs and symlink reconciliation |
-| `src/shim.ts` | the per-profile launcher commands in `binDir`, and the ownership rules around them |
+| `src/shim.ts` | the per-profile launcher commands in `binDir`, the ownership rules around them, and how a launcher points back at this install |
 | `src/rename.ts` | transactional profile rename (undo stack; the config write is the commit point) |
 | `src/mcp.ts` | provider MCP servers: definitions, authentication, syncing into a profile |
 | `src/catalog.ts` | provider model lists and capability filtering |
@@ -43,9 +41,6 @@ the file and fails if it differs.
 | `src/presets.ts` | the provider catalog |
 | `src/doctor.ts` | the checks behind `ccprovider doctor` |
 | `src/tui/` | the `add`/`edit` wizard |
-| `scripts/build-release.ts` | cross-compile the release binaries and write checksums |
-| `scripts/notices.ts` | regenerate `THIRD_PARTY_NOTICES.md` from the bundled dependencies |
-| `install.sh` | the installer; tested against a local `file://` release in `test/install.test.ts` |
 
 ## Rules
 
@@ -126,7 +121,22 @@ is the bar: `bun test`, `bun run typecheck`, and `README.md` and the `USAGE` tex
 ## Releases
 
 A release is a tag. Set `version` in `package.json`, move the `[Unreleased]` entries in
-`CHANGELOG.md` under it, commit, then `git tag vX.Y.Z && git push --tags`. The release
-workflow refuses a tag that doesn't equal `package.json`'s version, builds all four
-binaries, attests their provenance, and publishes them with `SHA256SUMS` and
-`install.sh`.
+`CHANGELOG.md` under it, commit to `main`, then `git tag -a vX.Y.Z -m ccprovider X.Y.Z &&
+git push origin vX.Y.Z`. The release workflow refuses a tag that isn't `package.json`'s
+version or isn't on `main`, runs the tests, packs the package, proves the tarball installs
+and runs under Node, attests its provenance, and creates the GitHub release with the
+tarball attached. A tag with a hyphen (`v0.2.0-rc.1`) is a pre-release, and goes to npm
+under the `next` dist-tag.
+
+**Publishing to npm** is the last step of that workflow, and it only runs when the
+repository has an `NPM_TOKEN` secret. Until it does, a release lives on GitHub only and is
+installable by URL. To turn it on:
+
+1. Create the package's owner on npm (the `ccprovider` name was unclaimed when this was
+   written), and a granular access token with publish rights to it.
+2. Add it as the `NPM_TOKEN` repository secret.
+3. Tag the next release — or re-run the last release workflow, which publishes the same
+   tarball it already attested.
+
+npm records where each version came from (`--provenance`), so `npm audit signatures`
+verifies installs from the registry.

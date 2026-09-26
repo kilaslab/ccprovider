@@ -68,12 +68,19 @@ export function commandName(name: string): string {
   return cmd
 }
 
-/** How to re-run this same ccprovider. A compiled binary *is* the program, and Bun
- *  hides its embedded entry behind a virtual `/$bunfs/` path that no other process can
- *  open; run from source, the runtime plus the script is the launcher. */
+/** How to re-run this same ccprovider.
+ *
+ *  Installed from npm, or built from a clone, the entry is a JavaScript file whose
+ *  shebang finds `node` on PATH when it runs. The launcher bakes that *file* and not the
+ *  interpreter, on purpose: under nvm or fnm `process.execPath` is a versioned path that
+ *  vanishes the day the user changes Node version, and every launcher would go with it.
+ *
+ *  From TypeScript source (`bun run src/cli.ts`) there is no shebang to lean on, so the
+ *  runtime that is running is part of the launcher. */
 export function selfLauncher(execPath = process.execPath, argv1: string | undefined = process.argv[1]): string[] {
-  if (!argv1 || argv1.startsWith('/$bunfs/')) return [execPath]
-  return [execPath, realpathSync(argv1)]
+  if (!argv1) throw new ProfileError('Cannot tell how ccprovider was started, so a launcher cannot point at it.')
+  const script = realpathSync(argv1)
+  return /\.[cm]?js$/.test(script) ? [script] : [execPath, script]
 }
 
 /** Every value goes through `shellQuote`, so nothing in a path or name can be parsed

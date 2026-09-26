@@ -90,7 +90,7 @@ export const PRESETS: Preset[] = [
         {
           id: 'zai-mcp-server',
           label: 'Vision',
-          summary: 'image, screenshot, diagram and video analysis  (runs npx @z_ai/mcp-server)',
+          summary: 'image, screenshot, diagram and video analysis; runs npx @z_ai/mcp-server',
           kind: 'stdio',
           command: 'npx',
           // Pinned. This process is handed the API key, so a bare `@z_ai/mcp-server`

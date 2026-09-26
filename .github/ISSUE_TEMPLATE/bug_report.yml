@@ -42,10 +42,16 @@ body:
     attributes:
       label: Platform
       options:
-        - macOS (Apple silicon)
-        - macOS (Intel)
-        - Linux (x64)
-        - Linux (arm64)
+        - macOS
+        - Linux
+        - Windows via WSL
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: The output of `node --version`.
     validations:
       required: true
   - type: dropdown
@@ -53,9 +59,9 @@ body:
     attributes:
       label: How it was installed
       options:
-        - install.sh
-        - A release binary downloaded by hand
-        - Built from source (bun run build)
+        - npm install -g ccprovider
+        - A clone (node dist/cli.js, npm link or bun link)
+        - A release tarball
         - Running from source (bun run dev)
     validations:
       required: true
