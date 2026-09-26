@@ -2,10 +2,9 @@
 
 ## Supported versions
 
-No release has been tagged yet, so there is no supported version to patch — every
-security fix lands on `main`, and `main` is the only version anyone should be running.
-
-Once releases exist, this section will name the versions that still receive fixes.
+Only the latest release receives security fixes, and `main` is what the next one is built
+from. ccprovider is at 0.x, so fixes are not backported to earlier releases: upgrade with
+`install.sh`, which installs the latest.
 
 ## Reporting a vulnerability
 

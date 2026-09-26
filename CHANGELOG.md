@@ -6,8 +6,9 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
-The first public release. Nothing has been tagged yet; when it is, these entries move under
-`0.1.0`.
+## [0.1.0] - 2026-09-26
+
+The first public release.
 
 ### Added
 
@@ -42,3 +43,6 @@ The first public release. Nothing has been tagged yet; when it is, these entries
   launcher or an MCP config. A Claude subscription credential is never passed to a
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
+
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/kilaslab/ccprovider/releases/tag/v0.1.0
