@@ -1,0 +1,68 @@
+name: Release
+
+# A release is a tag. Pushing `vX.Y.Z` builds every binary, attests where each one came
+# from, and publishes them with a checksum file and the installer.
+#
+# Three guards, because `releases/latest/download` is what install.sh fetches by default:
+#   - the tag must equal package.json's version, so the number a binary prints with
+#     --version is the number on the release page;
+#   - the tagged commit must be on main, so a tag pushed on an unreviewed branch cannot
+#     ship code;
+#   - a tag with a hyphen (v0.2.0-rc.1) is published as a pre-release, which GitHub never
+#     serves as "latest".
+#
+# Also worth setting in the repository: a tag ruleset restricting who can create `v*`.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the GitHub release
+      id-token: write      # sign the provenance attestation
+      attestations: write  # store it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0             # needed to ask whether the tag is on main
+          persist-credentials: false # the write token is only handed to the final step
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+
+      - name: Tag matches package.json
+        run: test "v$(bun -e 'console.log(require("./package.json").version)')" = "$GITHUB_REF_NAME"
+
+      - name: Tagged commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - run: bun test
+      - run: bun run typecheck
+      - run: bun run build:all
+
+      - name: The binary built for this runner actually runs and reports the right version
+        run: test "$(./dist/ccprovider-linux-x64 --version)" = "$(bun -e 'console.log(require("./package.json").version)')"
+
+      - run: cp install.sh THIRD_PARTY_NOTICES.md dist/
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/ccprovider-*
+            dist/SHA256SUMS
+            dist/install.sh
+            dist/THIRD_PARTY_NOTICES.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/ccprovider-* dist/SHA256SUMS dist/install.sh dist/THIRD_PARTY_NOTICES.md --generate-notes --verify-tag $pre

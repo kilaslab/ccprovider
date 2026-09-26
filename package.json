@@ -1,34 +1,39 @@
 {
   "name": "ccprovider",
   "version": "0.1.0",
-  "description": "Provider profiles for Claude Code \u2014 run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
+  "private": true,
+  "description": "Provider profiles for Claude Code — run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
   "keywords": [
     "claude-code",
     "deepseek",
     "openrouter",
     "anthropic",
     "cli",
-    "llm"
+    "llm",
+    "glm",
+    "zai",
+    "mcp",
+    "profiles"
   ],
   "license": "MIT",
+  "author": "kilaslab",
+  "homepage": "https://github.com/kilaslab/ccprovider#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kilaslab/ccprovider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kilaslab/ccprovider/issues"
+  },
   "type": "module",
-  "engines": {
-    "node": ">=20.11"
-  },
-  "bin": {
-    "ccprovider": "dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "build": "bun build src/cli.ts --compile --outfile dist/ccprovider",
+    "build:all": "bun run scripts/build-release.ts",
+    "install:local": "bun run build && mkdir -p \"$HOME/.local/bin\" && cp dist/ccprovider \"$HOME/.local/bin/.ccprovider.tmp\" && mv -f \"$HOME/.local/bin/.ccprovider.tmp\" \"$HOME/.local/bin/ccprovider\"",
+    "notices": "bun run scripts/notices.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "dev": "bun run src/cli.ts",
-    "prepublishOnly": "bun run build"
+    "dev": "bun run src/cli.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0"
@@ -39,5 +44,5 @@
     "bun-types": "^1.4.0",
     "typescript": "^5.7.0"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.2"
 }

@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only by default: nothing in CI needs to write to the repository.
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -13,30 +17,56 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+      - name: THIRD_PARTY_NOTICES.md is current
+        run: |
+          bun run notices
+          git diff --exit-code THIRD_PARTY_NOTICES.md
 
-  # The artifact is published to npm and must run for users who do not have Bun.
-  # Deps still install via bun so this builds from the same locked versions the
-  # tests ran against — but nothing here executes under Bun.
-  node-compat:
-    runs-on: ubuntu-latest
+  # What ships is a compiled binary, so what has to work is the binary itself — not just
+  # the source the tests ran against. A compiled binary has no package.json beside it,
+  # which once made --version report 0.0.0; the version check below is the guard.
+  build:
     strategy:
+      fail-fast: false
       matrix:
-        node: [20, 22, 24]
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: ${{ matrix.node }}
+          bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: node dist/cli.js --help
-      - run: node dist/cli.js ls
-      - run: node dist/cli.js doctor
+      - name: The binary reports the version in package.json
+        run: test "$(./dist/ccprovider --version)" = "$(bun -e 'console.log(require("./package.json").version)')"
+      - run: ./dist/ccprovider --help
+      - run: ./dist/ccprovider ls
+      - run: ./dist/ccprovider doctor
+
+  # Every release target must cross-compile from one host, and the checksum file must
+  # match what was built. This is the exact step the release workflow runs.
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run build:all
+      - name: Four binaries and a matching checksum file
+        working-directory: dist
+        run: |
+          test "$(ls ccprovider-* | wc -l)" -eq 4
+          sha256sum -c SHA256SUMS
+      # Cross-compiled artifacts are what ships, and nothing above ran one.
+      - name: The linux-x64 artifact runs and reports the package version
+        run: test "$(./dist/ccprovider-linux-x64 --version)" = "$(bun -e 'console.log(require("./package.json").version)')"
