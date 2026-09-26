@@ -1,0 +1,11 @@
+# The forms are the intended entry points: a report without a version, a platform and a
+# reproduction costs a round trip to obtain the same information, and a blank issue is
+# where security reports end up.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kilaslab/ccprovider/security/advisories/new
+    about: Private disclosure, visible only to you and the maintainers. Never a public issue.
+  - name: Read the documentation
+    url: https://github.com/kilaslab/ccprovider#readme
+    about: Install, commands, provider setup, MCP servers and how profiles are isolated.

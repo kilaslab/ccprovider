@@ -1,0 +1,96 @@
+name: Bug report
+description: Something ccprovider does that the README says it does not, or the reverse.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A security problem does not belong here.** Disclose it privately through
+        [SECURITY.md](https://github.com/kilaslab/ccprovider/blob/main/SECURITY.md) —
+        an issue is indexed within minutes and tells everyone what to attack before
+        there is a fix.
+
+        Please search the open issues first. Triage is done by one person.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste the exact error text when there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest sequence that shows it.
+      placeholder: |
+        1. ccprovider add  (provider: ..., ...)
+        2. glm --resume
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `ccprovider --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux (x64)
+        - Linux (arm64)
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - install.sh
+        - A release binary downloaded by hand
+        - Built from source (bun run build)
+        - Running from source (bun run dev)
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - DeepSeek
+        - OpenRouter
+        - Kimi / Moonshot
+        - GLM / Z.ai
+        - MiniMax
+        - Custom endpoint
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`ccprovider doctor <name>` output"
+      description: |
+        It checks the binary, the profile directory, the key, the endpoint, every model
+        tier, the installed command and MCP servers. It never prints your API key, but
+        read it over before pasting.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the open issues for the same problem.
+          required: true
+        - label: This is not a security report — those go to SECURITY.md, privately.
+          required: true
+        - label: I removed API keys and tokens from anything I pasted.
+          required: true

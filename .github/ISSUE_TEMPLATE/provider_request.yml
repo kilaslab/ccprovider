@@ -1,0 +1,48 @@
+name: Provider preset request
+description: Add a provider to the setup wizard.
+title: "[Provider]: "
+labels: ["provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A preset must point at a base URL that **speaks the Anthropic Messages format**.
+        A provider that only offers the OpenAI format needs a LiteLLM front and is not a
+        candidate. CONTRIBUTING.md explains how to probe an endpoint properly — a bare
+        401 proves nothing.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: Name and website.
+    validations:
+      required: true
+  - type: input
+    id: base-url
+    attributes:
+      label: Anthropic-format base URL
+      placeholder: https://api.example.com/anthropic
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Their Claude Code documentation
+      description: The provider's own page on using Claude Code with it. Model IDs taken from a provider's docs are more trustworthy than ones inferred from a model list.
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Probe results
+      description: Status codes for `/v1/messages` and a bogus path such as `/v1/__bogus__`, as described in CONTRIBUTING.md.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: models
+    attributes:
+      label: Models for each tier
+      description: Which model IDs should map to opus, sonnet, haiku and subagents, and the context window of each.
+    validations:
+      required: false
