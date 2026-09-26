@@ -83,8 +83,27 @@ export function validateProfile(raw: unknown, where: string): Profile {
     effortLevel: optionalString(p.effortLevel, `${where}: effortLevel`),
     blankApiKey: p.blankApiKey === true,
     preset: optionalString(p.preset, `${where}: preset`) ?? undefined,
+    mcp: optionalIdList(p.mcp, `${where}: mcp`),
     createdAt: optionalString(p.createdAt, `${where}: createdAt`) ?? undefined,
   }
+}
+
+/** MCP server IDs become `claude mcp` arguments and JSON keys, so hold them to the
+ *  same boring alphabet as profile names.
+ *
+ *  Absent and empty mean different things and must round-trip as such: absent is "never
+ *  asked" (the wizard offers everything), `[]` is "asked, and the answer was none". */
+function optionalIdList(v: unknown, where: string): string[] | undefined {
+  if (v == null) return undefined
+  if (!Array.isArray(v)) throw new ProfileError(`${where} must be an array of server IDs`)
+  const ids: string[] = []
+  for (const id of v) {
+    if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+      throw new ProfileError(`${where}: "${String(id)}" is not a valid server ID (lowercase letters, digits, dash)`)
+    }
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
 }
 
 function optionalString(v: unknown, where: string): string | null {

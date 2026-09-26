@@ -7,6 +7,9 @@ export interface Paths {
   configFile: string
   dirsRoot: string
   cacheDir: string
+  /** Where per-profile launcher commands are installed. Must be on the user's PATH
+   *  for `glm` to resolve as a command; `doctor` checks that it is. */
+  binDir: string
 }
 
 function xdg(env: NodeJS.ProcessEnv, varName: string, fallback: string, home: string): string {
@@ -37,6 +40,10 @@ export function getPaths(env: NodeJS.ProcessEnv = process.env, home = homedir())
     configFile: join(xdg(env, 'XDG_CONFIG_HOME', '.config', home), 'ccprovider', 'providers.json'),
     dirsRoot,
     cacheDir: join(xdg(env, 'XDG_CACHE_HOME', '.cache', home), 'ccprovider'),
+    // ~/.local/bin is where Claude Code itself installs `claude`, so it is already on
+    // the PATH of anyone who can run this tool. Overridable for tests and for people
+    // who keep launchers elsewhere.
+    binDir: env.CCPROVIDER_BIN_DIR?.startsWith('/') ? env.CCPROVIDER_BIN_DIR : join(home, '.local', 'bin'),
   }
 }
 

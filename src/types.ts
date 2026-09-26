@@ -37,8 +37,42 @@ export interface Profile {
   blankApiKey?: boolean
   /** Preset this profile was created from, for `edit` and diagnostics. */
   preset?: string
+  /** IDs of the preset's MCP servers enabled for this profile. The definitions
+   *  themselves are derived from the preset at sync time and live in the profile's
+   *  own Claude config — only the choice is stored here. */
+  mcp?: string[]
   createdAt?: string
 }
+
+/** One place a provider hosts its MCP servers. Picked by the start of the profile's
+ *  `baseUrl`, because the same vendor runs separate international and mainland-China
+ *  deployments whose MCP hosts and modes differ. */
+export interface McpRegion {
+  appliesTo: string
+  /** Scheme + host the http servers' `path` hangs off. */
+  origin: string
+  /** Value the vendor's stdio server expects for its region-mode variable. */
+  mode: string
+}
+
+interface McpServerBase {
+  /** Name the server is registered under in Claude Code (`claude mcp list`). */
+  id: string
+  label: string
+  summary: string
+}
+
+export type McpServerSpec =
+  | (McpServerBase & { kind: 'http'; path: string })
+  | (McpServerBase & {
+      kind: 'stdio'
+      command: string
+      args: string[]
+      /** Env var the server reads its API key from. */
+      keyEnv: string
+      /** Env var the server reads the region mode from. */
+      modeEnv: string
+    })
 
 export interface ProfileStore {
   version: 1
@@ -67,6 +101,13 @@ export interface Preset {
   maxOutputTokens?: number
   effortLevel?: string
   blankApiKey?: boolean
+  /** MCP servers the provider ships for its own plan, offered in the wizard. */
+  mcp?: {
+    /** Shown beside the picker, e.g. which plan the servers require. */
+    note?: string
+    regions: McpRegion[]
+    servers: McpServerSpec[]
+  }
 }
 
 /** Strip the `[1m]` context-window suffix from a model ID. Claude Code does this

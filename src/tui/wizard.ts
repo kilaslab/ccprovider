@@ -3,6 +3,7 @@ import { PRESETS, findPreset, MIRRORS, compactWindowFor } from '../presets.js'
 import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
 import { validateName } from '../profile.js'
+import { regionFor } from '../mcp.js'
 import type { Profile, Preset } from '../types.js'
 import type { Paths } from '../paths.js'
 
@@ -156,6 +157,9 @@ export async function runWizard(
   // ---- 8. effort
   const effortLevel = existing?.profile.effortLevel ?? preset?.effortLevel ?? null
 
+  // ---- 9. the provider's own MCP servers
+  const mcp = await chooseMcp(preset, baseUrl, existing?.profile)
+
   const profile: Profile = {
     baseUrl,
     aliases,
@@ -166,6 +170,7 @@ export async function runWizard(
     effortLevel,
     blankApiKey: existing?.profile.blankApiKey ?? preset?.blankApiKey ?? false,
     preset: presetId as string,
+    mcp,
     createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
   }
 
@@ -186,6 +191,37 @@ export async function runWizard(
   if (!ok) { p.cancel('Nothing was saved.'); process.exit(1) }
 
   return { name, profile, apiKey }
+}
+
+/**
+ * Which of the provider's MCP servers to enable.
+ *
+ * Everything starts ticked the first time, because a provider ships these for its plan
+ * subscribers and leaving them off defeats the point. After that the stored choice
+ * wins, including "none" — an empty list means the user was asked and declined.
+ */
+async function chooseMcp(preset: Preset | undefined, baseUrl: string, existing: Profile | undefined): Promise<string[] | undefined> {
+  if (!preset?.mcp) return existing?.mcp
+  const { note, regions, servers } = preset.mcp
+
+  if (!regionFor(baseUrl, preset)) {
+    // Not an error: a custom gateway in front of the provider has no MCP hosts of its own.
+    p.log.info(
+      `${preset.label}'s MCP servers are only set up for ${regions.map((r) => new URL(r.origin).host).join(' and ')}, ` +
+        `not ${baseUrl}, so none are enabled.`,
+    )
+    return existing?.mcp
+  }
+
+  const all = servers.map((s) => s.id)
+  return orCancel(
+    await p.multiselect({
+      message: `${preset.label} MCP tools${note ? `  (${note})` : ''}`,
+      options: servers.map((s) => ({ value: s.id, label: s.label, hint: s.summary })),
+      initialValues: (existing?.mcp ?? all).filter((id) => all.includes(id)),
+      required: false,
+    }),
+  )
 }
 
 async function loadCatalog(preset: Preset | undefined, paths: Paths, apiKey: string, refresh: boolean): Promise<ModelInfo[] | null> {

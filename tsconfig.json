@@ -11,6 +11,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
     "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "types": [
       "node",
@@ -22,6 +23,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }

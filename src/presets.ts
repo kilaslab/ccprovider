@@ -76,6 +76,36 @@ export const PRESETS: Preset[] = [
     defaultModel: 'glm-5.3',
     contextTokens: 1048576,
     autoCompactWindow: 786432,
+    // The MCP servers Z.ai ships for GLM Coding Plan subscribers. Definitions verified
+    // 2026-09-26 against docs.z.ai/devpack/mcp/* (global region) and the source of
+    // @z_ai/coding-helper@0.1.1 (both regions — the mainland host and its ZHIPU mode
+    // are not on the docs pages).
+    mcp: {
+      note: 'exclusive to GLM Coding Plan subscribers',
+      regions: [
+        { appliesTo: 'https://api.z.ai/', origin: 'https://api.z.ai', mode: 'ZAI' },
+        { appliesTo: 'https://open.bigmodel.cn/', origin: 'https://open.bigmodel.cn', mode: 'ZHIPU' },
+      ],
+      servers: [
+        {
+          id: 'zai-mcp-server',
+          label: 'Vision',
+          summary: 'image, screenshot, diagram and video analysis  (runs npx @z_ai/mcp-server)',
+          kind: 'stdio',
+          command: 'npx',
+          // Pinned. This process is handed the API key, so a bare `@z_ai/mcp-server`
+          // would run whatever version npm serves next with your key. Z.ai's docs say
+          // 0.1.2 or newer; 0.1.5 is what was current when this was verified. Bump it
+          // deliberately.
+          args: ['-y', '@z_ai/mcp-server@0.1.5'],
+          keyEnv: 'Z_AI_API_KEY',
+          modeEnv: 'Z_AI_MODE',
+        },
+        { id: 'web-search-prime', label: 'Web search', summary: 'search the web from a session', kind: 'http', path: '/api/mcp/web_search_prime/mcp' },
+        { id: 'web-reader', label: 'Web reader', summary: 'fetch a page as title, text, metadata and links', kind: 'http', path: '/api/mcp/web_reader/mcp' },
+        { id: 'zread', label: 'Zread', summary: 'search and read GitHub repositories', kind: 'http', path: '/api/mcp/zread/mcp' },
+      ],
+    },
   },
   {
     id: 'minimax',

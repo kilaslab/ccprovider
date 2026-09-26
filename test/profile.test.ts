@@ -17,6 +17,7 @@ beforeEach(() => {
     configFile: join(home, '.config/ccprovider/providers.json'),
     dirsRoot: join(home, '.local/share/ccprovider/dirs'),
     cacheDir: join(home, '.cache/ccprovider'),
+    binDir: join(home, '.local/bin'),
   }
 })
 afterEach(() => rmSync(home, { recursive: true, force: true }))
@@ -32,6 +33,37 @@ const valid = {
     },
   },
 }
+
+describe('mcp field', () => {
+  const base = { baseUrl: 'https://api.z.ai/api/anthropic', aliases: { opus: 'm' } }
+
+  test('absent stays absent — "never asked" is not "asked, and none"', () => {
+    expect(validateProfile(base, 't').mcp).toBeUndefined()
+  })
+
+  test('an explicit empty list survives a save and load', () => {
+    // Regression guard: collapsing [] to undefined made the wizard re-tick every server
+    // on each `edit` for someone who had deliberately turned them all off.
+    const store = validateStore({ version: 1, providers: { glm: { ...base, mcp: [] } } })
+    saveStore(paths, store)
+    expect(loadStore(paths).providers.glm!.mcp).toEqual([])
+  })
+
+  test('a chosen list round-trips and is de-duplicated', () => {
+    expect(validateProfile({ ...base, mcp: ['zread', 'web-reader', 'zread'] }, 't').mcp).toEqual(['zread', 'web-reader'])
+  })
+
+  test.each([
+    ['not an array', 'zread'],
+    ['a non-string entry', [1]],
+    ['an uppercase ID', ['Zread']],
+    ['an ID with a path separator', ['../zread']],
+    ['an ID with a space', ['web reader']],
+    ['an empty ID', ['']],
+  ])('rejects %s', (_label, mcp) => {
+    expect(() => validateProfile({ ...base, mcp }, 't')).toThrow(ProfileError)
+  })
+})
 
 describe('store round-trip', () => {
   test('missing config yields an empty store, not an error', () => {

@@ -38,8 +38,14 @@ export class KeychainStore implements SecretStore {
   async delete(account: string): Promise<void> {
     try {
       await run('security', ['delete-generic-password', '-s', SERVICE, '-a', account])
-    } catch {
-      /* already gone */
+    } catch (e) {
+      // 44 is "not found": already gone, which is what the caller wanted. Anything else
+      // (a denied prompt, a locked keychain) is a real failure — swallowing it made
+      // `rename` believe the old entry was deleted and hid a failed rollback, leaving an
+      // orphaned key that blocked the next rename onto that name.
+      const code = (e as { code?: number }).code
+      if (code === 44) return
+      throw new Error(`Could not delete the API key entry for "${account}" from the macOS Keychain (security exited ${code ?? '?'}).`)
     }
   }
 }

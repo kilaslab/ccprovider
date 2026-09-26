@@ -107,7 +107,7 @@ describe('per-model probe', () => {
 })
 
 describe('doctor', () => {
-  const paths: Paths = { claudeDir: '/nope/.claude', configFile: '/nope/c.json', dirsRoot: '/nope/dirs', cacheDir: '/nope/cache' }
+  const paths: Paths = { claudeDir: '/nope/.claude', configFile: '/nope/c.json', dirsRoot: '/nope/dirs', cacheDir: '/nope/cache', binDir: '/nope/bin' }
   const profile: Profile = {
     baseUrl: 'https://x.dev/anthropic',
     aliases: { opus: 'big', sonnet: 'big', haiku: 'small', subagent: 'small' },
