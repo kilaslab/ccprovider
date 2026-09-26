@@ -1,26 +1,17 @@
-# Dependency updates: one grouped pull request per ecosystem per week.
+# Dependency updates: one grouped pull request per week.
 #
-# Grouped on purpose. Ungrouped, every bump is its own pull request and reviewers learn
-# to ignore them, which is worse than no automation. Major versions stay out of the
-# groups — each needs a human to read a changelog.
+# Only `github-actions` is configured, and it matters: the workflows pin every action to a
+# commit SHA with the version in a trailing comment, and Dependabot is one of the few tools
+# that understands that convention well enough to keep the pins current.
 #
-# `github-actions` matters more than usual here: the workflows pin every action to a
-# commit SHA with the version in a trailing comment, and Dependabot is one of the few
-# tools that understands that convention well enough to keep the pins current.
+# The `bun` ecosystem is deliberately absent. Its first run failed in the updater
+# (`update_files`) on this repository, and a permanently red Dependabot run teaches people
+# to ignore the real ones. The one runtime dependency, @clack/prompts, is updated by hand:
+# `bun update`, then `bun run notices` (see CONTRIBUTING.md). Revisit when Dependabot's Bun
+# support catches up with Bun 1.4's lockfile.
 version: 2
 
 updates:
-  - package-ecosystem: bun
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    groups:
-      bun:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

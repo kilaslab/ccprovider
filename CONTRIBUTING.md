@@ -24,7 +24,8 @@ Things that only go wrong in a *compiled* binary are guarded in CI's `build` job
 one already found: a binary has no `package.json` beside it, so anything that reads it at
 runtime silently reports a wrong version. `src/cli.ts` imports it instead.
 
-When you add or upgrade a runtime dependency, run `bun run notices` and commit the result:
+Dependencies are updated by hand (`bun update`; Dependabot only keeps the workflow's action
+pins current). When you add or upgrade a runtime dependency, run `bun run notices` and commit the result:
 the binary bundles it, and its license requires the notice to travel along. CI regenerates
 the file and fails if it differs.
 
