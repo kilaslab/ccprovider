@@ -10,8 +10,11 @@ import type { Paths } from '../paths.js'
 export interface WizardResult {
   name: string
   profile: Profile
-  apiKey: string
+  /** Null for a Claude subscription profile, which stores no key. */
+  apiKey: string | null
 }
+
+const CLAUDE_CHOICE = 'claude'
 
 export async function runWizard(
   paths: Paths,
@@ -27,9 +30,35 @@ export async function runWizard(
     : orCancel(
         await p.select({
           message: 'Provider',
-          options: PRESETS.map((x) => ({ value: x.id, label: x.label })),
+          options: [
+            { value: CLAUDE_CHOICE, label: 'Claude subscription', hint: 'another Claude login, signed in with /login' },
+            ...PRESETS.map((x) => ({ value: x.id, label: x.label })),
+          ],
         }),
       )
+  if (!existing && presetId === CLAUDE_CHOICE) {
+    const name = validateName(
+      orCancel(
+        await p.text({
+          message: 'Profile name',
+          placeholder: 'work',
+          validate: (v) => {
+            if (!v) return 'A name is required, e.g. "work".'
+            let n: string
+            try { n = validateName(v) } catch (e) { return (e as Error).message }
+            if (takenNames.some((t) => t.toLowerCase() === n)) {
+              return `"${n}" already exists — pick another name.`
+            }
+          },
+        }),
+      ),
+    )
+    return {
+      name,
+      profile: { kind: 'oauth', baseUrl: '', aliases: {}, preset: CLAUDE_CHOICE, createdAt: new Date().toISOString() },
+      apiKey: null,
+    }
+  }
   const preset = findPreset(presetId as string)
 
   // ---- 2. name

@@ -15,7 +15,11 @@ export const ALIAS_SLOTS: readonly AliasSlot[] = [...TIERS, 'subagent']
 export const REQUIRED_SLOTS: readonly AliasSlot[] = ['opus', 'sonnet', 'haiku', 'subagent']
 
 export interface Profile {
-  /** Anthropic-format endpoint, e.g. https://api.deepseek.com/anthropic */
+  /** `oauth` is a Claude subscription login that lives in the profile's own config
+   *  directory: no endpoint, no API key, no alias mapping. Absent means an API-key
+   *  provider profile. */
+  kind?: 'oauth'
+  /** Anthropic-format endpoint, e.g. https://api.deepseek.com/anthropic. Empty for `oauth`. */
   baseUrl: string
   /** Tier -> provider model ID. Values may carry a `[1m]` suffix, which Claude Code
    *  reads per-variable and strips before the ID reaches the provider. */
@@ -108,6 +112,10 @@ export interface Preset {
     regions: McpRegion[]
     servers: McpServerSpec[]
   }
+}
+
+export function isOauth(profile: Profile): boolean {
+  return profile.kind === 'oauth'
 }
 
 /** Strip the `[1m]` context-window suffix from a model ID. Claude Code does this

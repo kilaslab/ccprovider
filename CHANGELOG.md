@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-29
+
 ### Changed
 
 - **Distributed as an npm package again, not as compiled binaries.** A compiled binary is
@@ -16,6 +18,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- **Claude subscription profiles.** `ccprovider add` can now create a profile that is a second
+  Claude login rather than an API-key provider, so a personal and a work subscription can be
+  signed in at once. It gets its own config directory and stores no key; `/login` on first
+  launch. `ls`, `use`, `env`, `rm` and `doctor` understand it.
 - Use without the registry: clone, `npm install && npm link`. `prepare` builds `dist/`.
 - The release workflow packs the tarball, proves it installs and runs under Node, attests its
   provenance, creates the GitHub release, and publishes to npm when an `NPM_TOKEN` secret exists.
@@ -69,5 +75,6 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kilaslab/ccprovider/releases/tag/v0.1.0

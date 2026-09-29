@@ -112,6 +112,7 @@ export function resolveModel(profile: Profile, requested?: string | null): strin
 /** Slots a session can request that this profile leaves unmapped. Each one is a
  *  request that would go out carrying a Claude model ID the provider does not have. */
 export function missingSlots(profile: Profile): AliasSlot[] {
+  if (profile.kind === 'oauth') return []
   return REQUIRED_SLOTS.filter((s) => !profile.aliases[s])
 }
 
@@ -133,6 +134,11 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
   for (const key of MANAGED_VARS) delete env[key]
 
   env.CLAUDE_CONFIG_DIR = configDir
+  // A subscription profile talks to Anthropic with the login stored in its own config
+  // directory, so nothing else is injected — the strip pass above already removed
+  // anything inherited that would compete with that login.
+  if (profile.kind === 'oauth') return env
+
   env.ANTHROPIC_BASE_URL = profile.baseUrl
   env.ANTHROPIC_AUTH_TOKEN = apiKey
 

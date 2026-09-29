@@ -55,6 +55,19 @@ export function validateProfile(raw: unknown, where: string): Profile {
   if (typeof raw !== 'object' || raw === null) throw new ProfileError(`${where}: expected an object`)
   const p = raw as Record<string, unknown>
 
+  if (p.kind != null && p.kind !== 'oauth') {
+    throw new ProfileError(`${where}: unknown kind "${String(p.kind)}" (expected "oauth" or nothing)`)
+  }
+  if (p.kind === 'oauth') {
+    return {
+      kind: 'oauth',
+      baseUrl: '',
+      aliases: {},
+      preset: 'claude',
+      createdAt: optionalString(p.createdAt, `${where}: createdAt`) ?? undefined,
+    }
+  }
+
   if (typeof p.baseUrl !== 'string' || !/^https?:\/\//.test(p.baseUrl)) {
     throw new ProfileError(`${where}: baseUrl must be an http(s) URL`)
   }

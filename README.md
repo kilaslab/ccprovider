@@ -270,6 +270,14 @@ Built-in presets: **DeepSeek**, **OpenRouter**, **Kimi/Moonshot**, **GLM/Z.ai**,
 was verified against the live API, and the wizard fetches the provider's current model
 list with your key — so a preset that goes stale corrects itself at setup time.
 
+**Claude subscription** is not a provider but a second login. Pick it in `ccprovider add`
+to get a profile with its own Claude account — for example a work subscription next to
+your personal one. It sets only `CLAUDE_CONFIG_DIR`, so Claude Code keeps that profile's
+login (`.credentials.json`, or a Keychain entry keyed to the directory on macOS) apart
+from `~/.claude` and every other profile. Run the profile, type `/login` once, and both
+accounts stay signed in side by side. It stores no API key and has no endpoint or model
+mapping; `ccprovider doctor` skips those checks for it.
+
 OpenRouter gets the richest treatment: its catalog is public and carries per-model
 context length, output caps, tool support, vision support, and pricing, all shown in a
 searchable picker.
@@ -328,7 +336,9 @@ providers like DeepSeek and OpenRouter document Claude Code as a client of their
 Anthropic-compatible endpoints. In this mode no request reaches Anthropic.
 
 Don't do the reverse — piping Claude subscription credentials into third-party tools is
-what actually violates the terms.
+what actually violates the terms. A Claude subscription profile does not do that: it
+never reads or moves the login, it only gives Claude Code its own config directory to
+sign in to. Use it with accounts that are yours to use.
 
 ## Contributing and security
 

@@ -16,7 +16,7 @@ import { renameProfile } from './rename.js'
 import { binDirOnPath, inspectShim, installCommandFor, listShims, removeShim, selfLauncher } from './shim.js'
 import { p } from './tui/prompts.js'
 import { shellQuote } from './shell.js'
-import type { Profile } from './types.js'
+import { isOauth, type Profile } from './types.js'
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -179,7 +179,7 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   const result = await runWizard(paths, null, Object.keys(store.providers), refresh)
   store.providers[result.name] = result.profile
   saveStore(paths, store)
-  await secrets.set(result.name, result.apiKey)
+  if (result.apiKey) await secrets.set(result.name, result.apiKey)
   const dir = profileDir(paths, result.name)
   reconcileLinks(dir, paths.claudeDir)
 
@@ -192,6 +192,9 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   // Only promise the short form when it will actually work: a command that was skipped,
   // is off PATH, or is shadowed would launch something else.
   const use = c.bold(`ccprovider use ${result.name}`)
+  if (isOauth(result.profile)) {
+    console.log(c.dim(`  First launch: type /login inside Claude Code and sign in with the account for "${result.name}".`))
+  }
   p.outro(
     installed?.usable ? `Saved. Launch it with  ${c.bold(result.name)}  or  ${use}`
     : install ? `Saved. Launch it with  ${use}`
@@ -203,12 +206,16 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
 async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: boolean): Promise<number> {
   const store = loadStore(paths)
   const profile = getProfile(store, name)
+  if (isOauth(profile)) {
+    console.log(`"${name}" is a Claude subscription profile: there is no endpoint or key to edit. Use /login inside it to switch accounts.`)
+    return 0
+  }
   const apiKey = await secrets.get(name)
   const { runWizard } = await import('./tui/wizard.js')
   const result = await runWizard(paths, { name, profile, apiKey }, [], refresh)
   store.providers[name] = result.profile
   saveStore(paths, store)
-  await secrets.set(name, result.apiKey)
+  if (result.apiKey) await secrets.set(name, result.apiKey)
   reconcileLinks(profileDir(paths, name), paths.claudeDir)
   for (const line of setupMcp(paths, name, result.profile, profile.mcp ?? [])) console.log(line)
   p.outro('Updated.')
@@ -310,6 +317,17 @@ async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retu
   }
   for (const n of names) {
     const pr = store.providers[n]!
+    if (isOauth(pr)) {
+      console.log(`${c.bold(n.padEnd(14))} ${c.green('Claude subscription')}`)
+      console.log(`  ${c.dim('own login in its profile directory — /login on first launch')}`)
+      const s = inspectShim(paths, n)
+      console.log(
+        s.state === 'ours' ? `  ${c.dim('command')} ${c.green(n)}`
+        : s.state === 'foreign' ? `  ${c.dim('command')} ${c.yellow(`\`${n}\` is taken by another program`)}`
+        : `  ${c.dim(`no command — \`ccprovider install ${n}\``)}`,
+      )
+      continue
+    }
     const hasKey = (await secrets.get(n)) != null
     const missing = missingSlots(pr)
     const flag = !hasKey ? c.red('no key') : missing.length ? c.yellow(`unmapped: ${missing.join(',')}`) : c.green('ready')
@@ -337,8 +355,13 @@ async function cmdUse(
 ): Promise<number> {
   const store = loadStore(paths)
   const profile = getProfile(store, name)
-  const apiKey = await secrets.get(name)
-  if (!apiKey) {
+  const oauth = isOauth(profile)
+  const apiKey = oauth ? '' : await secrets.get(name)
+  if (apiKey === null) {
+    console.error(`No API key stored for "${name}". Run \`ccprovider edit ${name}\` to set one.`)
+    return 1
+  }
+  if (!oauth && !apiKey) {
     console.error(`No API key stored for "${name}". Run \`ccprovider edit ${name}\` to set one.`)
     return 1
   }
@@ -390,7 +413,9 @@ async function cmdRemove(
 
   if (!yes) {
     const ok = await p.confirm({
-      message: `Delete profile "${name}", its API key and its session history?`,
+      message: isOauth(getProfile(store, name))
+        ? `Delete profile "${name}", its Claude login and its session history?`
+        : `Delete profile "${name}", its API key and its session history?`,
       initialValue: false,
     })
     if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }
@@ -434,7 +459,7 @@ async function cmdDoctor(
   let worst: 'ok' | 'warn' | 'fail' = 'ok'
   for (const n of names) {
     const profile = getProfile(store, n)
-    console.log(`\n${c.bold(n)}  ${c.dim(profile.baseUrl)}`)
+    console.log(`\n${c.bold(n)}  ${c.dim(isOauth(profile) ? 'Claude subscription' : profile.baseUrl)}`)
     const checks = await runDoctor(n, profile, paths, secrets)
     for (const check of checks) render(check)
     const s = worstStatus(checks)
@@ -467,8 +492,8 @@ async function cmdEnv(
 ): Promise<number> {
   const store = loadStore(paths)
   const profile = getProfile(store, name)
-  const apiKey = await secrets.get(name)
-  if (!apiKey) { console.error(`No API key stored for "${name}".`); return 1 }
+  const apiKey = isOauth(profile) ? '' : await secrets.get(name)
+  if (apiKey === null || (!apiKey && !isOauth(profile))) { console.error(`No API key stored for "${name}".`); return 1 }
   const env = buildEnv({ profile, configDir: profileDir(paths, name), apiKey, model: null, baseEnv: {} })
   // Redacted when a human is looking; real values when piped into `eval`.
   const shown = process.stdout.isTTY ? describeEnv(env) : env

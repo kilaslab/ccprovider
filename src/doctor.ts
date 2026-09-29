@@ -69,6 +69,24 @@ export async function runDoctor(
     })
   }
 
+  // A subscription profile has no endpoint, key or aliases to check; what matters is
+  // whether it has signed in yet, plus the command and the shared-settings override.
+  if (profile.kind === 'oauth') {
+    const signedIn = existsSync(join(dir, '.credentials.json'))
+    checks.push({
+      label: 'Claude login',
+      // macOS keeps the login in the Keychain, so a missing file proves nothing there.
+      status: 'ok',
+      detail: signedIn
+        ? 'credentials found in the profile directory'
+        : `not detected in the profile directory (on macOS it may be in the Keychain) — run \`${name}\` and use /login if it asks`,
+    })
+    checks.push(commandCheck(name, paths, opts.env ?? process.env))
+    const s = settingsCheck(dir)
+    if (s) checks.push(s)
+    return checks
+  }
+
   // --- alias coverage: the check that catches silent 404s
   const missing = missingSlots(profile)
   checks.push({
