@@ -6,6 +6,18 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-30
+
+### Fixed
+
+- **Launchers no longer run a project's `node` wrapper.** A launcher ran `dist/cli.js` through
+  its `#!/usr/bin/env node` shebang, so inside a project whose `.envrc` puts a `.bin/node`
+  wrapper first on `PATH` (`docker compose exec app node`), every launcher started ccprovider
+  in the container and failed with `service "app" is not running`. A launcher now tries the
+  `node` that installed it first, and falls back on the shebang only once that file is gone,
+  so changing Node version under nvm or fnm still does not break it. Run `ccprovider install`
+  to refresh existing launchers.
+
 ## [0.1.1] - 2026-09-29
 
 ### Changed
@@ -75,6 +87,7 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kilaslab/ccprovider/releases/tag/v0.1.0

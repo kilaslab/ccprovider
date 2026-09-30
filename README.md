@@ -172,14 +172,18 @@ glm --resume
 glm -p "summarise this repo"
 ```
 
-The command is a three-line `/bin/sh` script in `~/.local/bin`. It holds no key and no
+The command is a short `/bin/sh` script in `~/.local/bin`. It holds no key and no
 configuration — it runs `ccprovider use glm -- "$@"`, and that is the one place that
 reads your key and builds the environment. Because it is plain `sh`, it works the same
 from bash, zsh and fish.
 
-It points at the installed `dist/cli.js` and lets that file's shebang find `node` when it
-runs, rather than baking in a Node path: under nvm or fnm that path changes with every
-Node version. What it does depend on is the package staying where it was. If you switch
+It points at the installed `dist/cli.js` and runs it with the `node` that installed it, as
+long as that file still exists. Once it is gone — under nvm or fnm that path changes with
+every Node version — it falls back on `dist/cli.js`'s own shebang, which finds `node` on
+`PATH`. Trying the installing `node` first matters inside projects that put their own `node`
+first on `PATH` (direnv's `PATH_add .bin` with a `docker compose exec app node` wrapper, say):
+from there, the shebang alone would start ccprovider inside the container. What the launcher
+does depend on is the package staying where it was. If you switch
 Node versions (a global package lives under that version's directory) or move a clone,
 `doctor` reports the launcher as stale and `ccprovider install` refreshes it.
 

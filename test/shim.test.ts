@@ -12,6 +12,7 @@ import {
   installCommandFor,
   installShim,
   listShims,
+  preferredNode,
   removeShim,
   renderShim,
   selfLauncher,
@@ -98,6 +99,91 @@ describe('the generated launcher', () => {
   test('supports a runtime plus script launcher (running from source)', () => {
     const text = renderShim(['/usr/local/bin/bun', '/src/cli.ts'], 'glm')
     expect(text).toContain(`exec '/usr/local/bin/bun' '/src/cli.ts' use 'glm' -- "$@"`)
+  })
+})
+
+describe('the launcher of a JavaScript entry', () => {
+  // A stand-in for dist/cli.js whose shebang is resolved by `env`, and a stand-in for the
+  // `node` that installed it. Each records which of the two actually ran.
+  let entry: string
+  let node: string
+  let pathNode: string
+  const ran = () => readFileSync(join(home, 'ran'), 'utf8')
+
+  beforeEach(() => {
+    entry = join(home, 'pkg', 'cli.js')
+    mkdirSync(join(home, 'pkg'))
+    writeFileSync(entry, `#!/usr/bin/env node\n`, { mode: 0o755 })
+    node = join(home, 'installed', 'node')
+    mkdirSync(join(home, 'installed'))
+    writeFileSync(node, `#!/bin/sh\necho installed > '${join(home, 'ran')}'\nshift\nprintf '%s\\0' "$@" > '${argsOut}'\nexit 7\n`, { mode: 0o755 })
+    // What a project's `.bin/node` wrapper looks like to `env`: first on PATH.
+    pathNode = join(home, 'project-bin')
+    mkdirSync(pathNode)
+    writeFileSync(join(pathNode, 'node'), `#!/bin/sh\necho path > '${join(home, 'ran')}'\nexit 3\n`, { mode: 0o755 })
+  })
+
+  const run = (...args: string[]) =>
+    spawnSync(join(paths.binDir, 'glm'), args, { env: { PATH: `${pathNode}:/usr/bin:/bin` } })
+
+  test('runs under the node that installed it, not whichever `node` is first on PATH', () => {
+    // Regression: direnv's `PATH_add .bin` put a `docker compose exec app node` wrapper first,
+    // so every launcher started ccprovider inside a stopped container.
+    installShim(paths, 'glm', [entry], node)
+    const r = run('a b', '-m')
+    expect(r.status).toBe(7)
+    expect(ran()).toBe('installed\n')
+    expect(recorded()).toEqual(['use', 'glm', '--', 'a b', '-m'])
+  })
+
+  test('falls back on the shebang once that node is gone, as after an nvm version change', () => {
+    installShim(paths, 'glm', [entry], node)
+    rmSync(node)
+    expect(run().status).toBe(3)
+    expect(ran()).toBe('path\n')
+  })
+
+  test('reads back as ours, with the same launcher and the node it tries first', () => {
+    installShim(paths, 'glm', [entry], node)
+    expect(listShims(paths)[0]).toMatchObject({ profile: 'glm', launcher: [entry], node })
+    expect(installShim(paths, 'glm', [entry], node).action).toBe('unchanged')
+    expect(removeShim(paths, 'glm')).toBe('removed')
+  })
+
+  test('replaces a launcher written before the guard existed', () => {
+    mkdirSync(paths.binDir, { recursive: true })
+    writeFileSync(join(paths.binDir, 'glm'), renderShim([entry], 'glm'), { mode: 0o755 })
+    expect(listShims(paths)[0]!.node).toBeUndefined()
+    expect(installShim(paths, 'glm', [entry], node).action).toBe('updated')
+  })
+
+  test('the guard line quotes the node path like every other value', () => {
+    expect(renderShim(['/opt/cc/cli.js'], 'glm', "/it's/node")).toBe(
+      [
+        '#!/bin/sh',
+        '# ccprovider-shim profile=glm - managed by ccprovider, do not edit',
+        `[ -x '/it'\\''s/node' ] && exec '/it'\\''s/node' '/opt/cc/cli.js' use 'glm' -- "$@"`,
+        `exec '/opt/cc/cli.js' use 'glm' -- "$@"`,
+        '',
+      ].join('\n'),
+    )
+    expect(() => renderShim(['/opt/cc/cli.js'], 'glm', '/odd\nnode')).toThrow(/line break/)
+  })
+})
+
+describe('preferredNode', () => {
+  test('is the running node, for a lone JavaScript entry', () => {
+    expect(preferredNode(['/pkg/dist/cli.js'], '/home/u/.nvm/versions/node/v22.1.0/bin/node')).toBe(
+      '/home/u/.nvm/versions/node/v22.1.0/bin/node',
+    )
+    expect(preferredNode(['/pkg/dist/cli.mjs'], '/usr/bin/node')).toBe('/usr/bin/node')
+  })
+
+  test('is nothing when there is no shebang to fall back on, or the runtime is not node', () => {
+    expect(preferredNode(['/usr/bin/bun', '/src/cli.ts'], '/usr/bin/bun')).toBeUndefined()
+    expect(preferredNode(['/opt/cc/ccprovider'], '/usr/bin/node')).toBeUndefined()
+    expect(preferredNode(['/pkg/dist/cli.js'], '/usr/bin/bun')).toBeUndefined()
+    expect(preferredNode([], '/usr/bin/node')).toBeUndefined()
   })
 })
 

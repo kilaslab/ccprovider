@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { delimiter, join, resolve } from 'node:path'
+import { basename, delimiter, join, resolve } from 'node:path'
 import type { Paths } from './paths.js'
 import { ProfileError, validateName } from './profile.js'
 import { shellQuote } from './shell.js'
@@ -42,6 +42,7 @@ const RESERVED: Record<string, string> = {
 }
 
 const SHEBANG = '#!/bin/sh'
+const NODE_GUARD = '[ -x '
 const MARKER_RE = /^# ccprovider-shim profile=([a-z0-9][a-z0-9._-]{0,63}) /
 
 /** Longest file we will even read when deciding whether a file is one of ours. A real
@@ -56,6 +57,8 @@ export interface ShimInfo {
   path: string
   /** The program (and leading args) the shim execs before `use <profile> --`. */
   launcher: string[]
+  /** The `node` the shim tries first, when it has one — see `preferredNode`. */
+  node?: string
 }
 
 /** Validate a name for use as a command. `validateName` alone is not enough: it must
@@ -75,6 +78,8 @@ export function commandName(name: string): string {
  *  interpreter, on purpose: under nvm or fnm `process.execPath` is a versioned path that
  *  vanishes the day the user changes Node version, and every launcher would go with it.
  *
+ *  (The launcher still tries that interpreter first while it exists — see `preferredNode`.)
+ *
  *  From TypeScript source (`bun run src/cli.ts`) there is no shebang to lean on, so the
  *  runtime that is running is part of the launcher. */
 export function selfLauncher(execPath = process.execPath, argv1: string | undefined = process.argv[1]): string[] {
@@ -83,21 +88,42 @@ export function selfLauncher(execPath = process.execPath, argv1: string | undefi
   return /\.[cm]?js$/.test(script) ? [script] : [execPath, script]
 }
 
+/** The `node` a launcher should try before falling back on the entry's shebang.
+ *
+ *  The shebang is `#!/usr/bin/env node`, which takes whichever `node` comes first on PATH —
+ *  and that is not always Node. direnv's `PATH_add .bin` is a common way for a project to
+ *  put a `node` wrapper in front (one that runs `docker compose exec app node`), and from
+ *  inside that project every launcher would then start ccprovider in a container.
+ *
+ *  So the launcher tries the `node` that is installing it first, and only when that file
+ *  is gone — the nvm/fnm version change `selfLauncher` is careful about — does it fall
+ *  back on the shebang. Only a lone JavaScript entry has a shebang to fall back on, and
+ *  only an interpreter that is actually `node` is worth pinning. */
+export function preferredNode(launcher: string[], execPath = process.execPath): string | undefined {
+  const [entry, ...rest] = launcher
+  if (!entry || rest.length || !/\.[cm]?js$/.test(entry)) return undefined
+  return basename(execPath) === 'node' ? execPath : undefined
+}
+
 /** Every value goes through `shellQuote`, so nothing in a path or name can be parsed
  *  as shell syntax. `"$@"` is the one intentionally live expansion. */
-export function renderShim(launcher: string[], name: string): string {
+export function renderShim(launcher: string[], name: string, node?: string): string {
   if (!launcher.length) throw new ProfileError('Cannot write a launcher with nothing to run.')
   // The exec line is parsed back one line at a time. A path with a line break would
   // write a file this tool then cannot recognise as its own — unmanageable, not unsafe.
-  if (launcher.some((w) => /[\r\n]/.test(w))) {
+  if ([...launcher, node ?? ''].some((w) => /[\r\n]/.test(w))) {
     throw new ProfileError('ccprovider is installed at a path containing a line break; a launcher cannot point at it.')
   }
+  // `--` is not optional: ccprovider's own parser would otherwise claim -m, -h and
+  // -y from the user's arguments instead of handing them to claude.
+  const tail = `use ${shellQuote(name)} -- "$@"`
+  const exec = `exec ${launcher.map(shellQuote).join(' ')} ${tail}`
   return [
     SHEBANG,
     `# ccprovider-shim profile=${name} - managed by ccprovider, do not edit`,
-    // `--` is not optional: ccprovider's own parser would otherwise claim -m, -h and
-    // -y from the user's arguments instead of handing them to claude.
-    `exec ${launcher.map(shellQuote).join(' ')} use ${shellQuote(name)} -- "$@"`,
+    // When `node` is missing, `[ -x ]` fails, `&&` skips the exec and the next line runs.
+    ...(node ? [`[ -x ${shellQuote(node)} ] && exec ${[node, ...launcher].map(shellQuote).join(' ')} ${tail}`] : []),
+    exec,
     '',
   ].join('\n')
 }
@@ -119,18 +145,30 @@ function readShim(path: string): ShimInfo | null {
   const text = readText(path)
   if (text === null) return null
 
-  const [line1, line2, line3] = text.split('\n')
+  const [line1, line2, line3, line4] = text.split('\n')
   if (line1 !== SHEBANG) return null
   const marker = MARKER_RE.exec(line2 ?? '')
-  if (!marker || !line3?.startsWith('exec ')) return null
+  if (!marker) return null
 
-  // Our own quoting is the only quoting present: single-quoted words, with a literal
-  // quote spelled '\''. The last word is the profile; the rest is the launcher.
-  const words = [...line3.matchAll(/'((?:[^']|'\\'')*)'/g)].map((m) => m[1]!.replace(/'\\''/g, "'"))
+  // Launchers written before `preferredNode` existed have no guard line.
+  const guarded = line3?.startsWith(NODE_GUARD) ?? false
+  const execLine = guarded ? line4 : line3
+  if (!execLine?.startsWith('exec ')) return null
+
+  // The last word is the profile; the rest is the launcher.
+  const words = quotedWords(execLine)
   if (words.length < 2) return null
+  const node = guarded ? quotedWords(line3!)[0] : undefined
+  if (guarded && !node) return null
 
   const profile = marker[1]!
-  return { command: path.split('/').pop()!, profile, path, launcher: words.slice(0, -1) }
+  return { command: path.split('/').pop()!, profile, path, launcher: words.slice(0, -1), ...(node ? { node } : {}) }
+}
+
+/** Our own quoting is the only quoting present: single-quoted words, with a literal
+ *  quote spelled '\''. */
+function quotedWords(line: string): string[] {
+  return [...line.matchAll(/'((?:[^']|'\\'')*)'/g)].map((m) => m[1]!.replace(/'\\''/g, "'"))
 }
 
 export type InstallAction = 'created' | 'updated' | 'unchanged'
@@ -142,10 +180,15 @@ export type InstallAction = 'created' | 'updated' | 'unchanged'
  * the user's own PATH directory and may hold real programs (`kimi`, `claude`) under the
  * very names a profile might pick.
  */
-export function installShim(paths: Paths, name: string, launcher: string[]): { path: string; action: InstallAction } {
+export function installShim(
+  paths: Paths,
+  name: string,
+  launcher: string[],
+  node = preferredNode(launcher),
+): { path: string; action: InstallAction } {
   const cmd = commandName(name)
   const path = join(paths.binDir, cmd)
-  const body = renderShim(launcher, cmd)
+  const body = renderShim(launcher, cmd, node)
   mkdirSync(paths.binDir, { recursive: true })
 
   const foreign = () =>
