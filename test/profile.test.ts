@@ -34,6 +34,15 @@ const valid = {
   },
 }
 
+test('opusplan as the default model survives a save and load', () => {
+  const store = validateStore({
+    version: 1,
+    providers: { glm: { baseUrl: 'https://api.z.ai/api/anthropic', aliases: { opus: 'glm-5.3', sonnet: 'glm-5.3-flash' }, defaultModel: 'opusplan' } },
+  })
+  saveStore(paths, store)
+  expect(loadStore(paths).providers.glm!.defaultModel).toBe('opusplan')
+})
+
 describe('mcp field', () => {
   const base = { baseUrl: 'https://api.z.ai/api/anthropic', aliases: { opus: 'm' } }
 

@@ -9,6 +9,11 @@ export type Tier = (typeof TIERS)[number]
 export type AliasSlot = Tier | 'subagent'
 export const ALIAS_SLOTS: readonly AliasSlot[] = [...TIERS, 'subagent']
 
+/** Claude Code's plan/execute mode: the `opus` slot while plan mode is on, the `sonnet`
+ *  slot otherwise. Not a tier of its own — it has no slot and resolves inside Claude
+ *  Code, so it is passed through as `ANTHROPIC_MODEL` verbatim. */
+export const OPUSPLAN = 'opusplan'
+
 /** Slots a profile must fill for a session to work end to end. `fable` is optional:
  *  a provider with nothing to map it to is better off leaving it unset than pointing
  *  it at a model that behaves nothing like the tier. */
@@ -24,7 +29,8 @@ export interface Profile {
   /** Tier -> provider model ID. Values may carry a `[1m]` suffix, which Claude Code
    *  reads per-variable and strips before the ID reaches the provider. */
   aliases: Partial<Record<AliasSlot, string>>
-  /** Model for the session itself. Defaults to the `opus` alias when unset. */
+  /** Model for the session itself: a provider model ID, or `opusplan`. Defaults to the
+   *  `opus` alias when unset. */
   defaultModel?: string | null
   /** The model's real context window.
    *

@@ -136,12 +136,30 @@ config is never touched.
 `add` and `edit` take `--refresh` to bypass the 24-hour model-list cache. `add` takes
 `--no-install` to skip installing the command. `-y` skips confirmation prompts.
 
-`-m` takes a tier (`opus`, `sonnet`, `haiku`) or a raw provider model ID. Anything after
-`--` goes straight to `claude`:
+`-m` takes a tier (`opus`, `sonnet`, `haiku`), `opusplan`, or a raw provider model ID.
+Anything after `--` goes straight to `claude`:
 
 ```bash
 ccprovider use deepseek -m haiku -- --resume
 ```
+
+### Opus, Sonnet and opusplan
+
+`add` and `edit` ask for the Opus and Sonnet models separately, so a provider with a heavy
+and a light flagship can have both. When they differ, you also pick what sessions start
+on: either one, or **`opusplan`**, Claude Code's mode that plans on the opus model and
+switches to the sonnet model to carry out the plan:
+
+```
+◇ Opus model    glm-5.3
+◇ Sonnet model  glm-5.3-flash
+◇ Start sessions on
+│ ● opusplan  plan on glm-5.3, execute on glm-5.3-flash
+```
+
+The choice is the profile's default, so plain `glm` launches into it; `/model` switches
+for the session. Context window and output cap are set once for both models, so `add`
+suggests the smaller of the two.
 
 `doctor` sends a real one-token request through **every** alias slot, which is the fastest
 way to find an unmapped tier. It also checks the parts around the request:
@@ -209,7 +227,8 @@ The commands are careful about what they touch:
   shadows earlier on `PATH`, and leftovers from a deleted profile.
 
 `-m` isn't available through the command (the command owns your arguments). For a
-one-off tier, use `ccprovider use glm -m haiku`.
+one-off tier, use `ccprovider use glm -m haiku`, or claude's own flag through the
+command: `glm --model opusplan`.
 
 ## Renaming a profile
 

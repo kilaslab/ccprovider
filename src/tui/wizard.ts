@@ -4,7 +4,8 @@ import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
 import { validateName } from '../profile.js'
 import { regionFor } from '../mcp.js'
-import type { Profile, Preset } from '../types.js'
+import { startChoiceOf } from '../launch.js'
+import { OPUSPLAN, type Profile, type Preset } from '../types.js'
 import type { Paths } from '../paths.js'
 
 export interface WizardResult {
@@ -166,14 +167,22 @@ export async function runWizard(
     existing?.profile,
   )
 
-  // ---- 7. the check that actually proves it: a real authenticated request
+  // ---- 7. the check that actually proves it: a real authenticated request per model.
+  // Every distinct one, not just opus — a typo in the sonnet slot would otherwise only
+  // surface mid-session, when opusplan leaves plan mode.
+  const models = [...new Set(Object.values(aliases))]
   const vs = p.spinner()
-  vs.start(`Testing ${aliases.opus}`)
-  const live = await probeModel(baseUrl, apiKey, aliases.opus)
-  if (live.ok) {
-    vs.stop('Model responded — endpoint, key and model ID all check out')
+  vs.start(`Testing ${models.join(', ')}`)
+  const live = await Promise.all(models.map(async (m) => ({ model: m, result: await probeModel(baseUrl, apiKey, m) })))
+  const rejected = live.filter((r) => !r.result.ok)
+  if (!rejected.length) {
+    vs.stop(`${models.length === 1 ? 'Model' : 'Every model'} responded — endpoint, key and model IDs all check out`)
   } else {
-    vs.stop(`Provider rejected the request: ${live.error ?? `HTTP ${live.status}`}`)
+    vs.stop('Provider rejected the request')
+    for (const { model, result } of rejected) {
+      const slots = (Object.keys(aliases) as (keyof typeof aliases)[]).filter((s) => aliases[s] === model)
+      p.log.error(`${slots.join(', ')} → ${model}: ${result.error ?? `HTTP ${result.status}`}`)
+    }
     const go = orCancel(
       await p.confirm({
         message: 'Save anyway? (`ccprovider doctor` re-runs this check later)',
@@ -210,6 +219,7 @@ export async function runWizard(
       `sonnet     ${aliases.sonnet}`,
       `haiku      ${aliases.haiku}`,
       `subagent   ${aliases.subagent}`,
+      `start      ${defaultModel === OPUSPLAN ? `opusplan (plan ${aliases.opus} → execute ${aliases.sonnet})` : defaultModel}`,
       contextTokens ? `context    ${contextTokens.toLocaleString()} tokens` : '',
       autoCompactWindow ? `compact at ${autoCompactWindow.toLocaleString()} tokens` : '',
     ].filter(Boolean).join('\n'),
@@ -312,25 +322,39 @@ async function chooseModels(
     ) as string
   }
 
-  const main = await pick('Main model  (Opus + Sonnet tiers)', prior.opus)
-  const fast = await pick('Fast model  (Haiku tier + subagents)', prior.haiku)
+  // Opus and Sonnet are asked separately rather than as one "main" model: opusplan plans
+  // on one and executes on the other, so a provider with a heavy and a light flagship
+  // wants them apart. Where they are the same, the prefill makes it a single Enter.
+  const opus = await pick('Opus model    (heavy work · plan mode under opusplan)', prior.opus)
+  const sonnet = await pick('Sonnet model  (everyday work · execution under opusplan)', prior.sonnet ?? opus)
+  const fast = await pick('Fast model    (Haiku tier + subagents)', prior.haiku)
 
-  const advanced = orCancel(
-    await p.confirm({ message: 'Map each tier separately instead?', initialValue: false }),
+  // Starts ticked when the profile already maps them apart, so `edit` never collapses them.
+  const splitFast = orCancel(
+    await p.confirm({
+      message: 'Map haiku and subagent separately?',
+      initialValue: !!prior.haiku && !!prior.subagent && prior.haiku !== prior.subagent,
+    }),
   )
+  const aliases = {
+    opus,
+    sonnet,
+    ...(splitFast
+      ? { haiku: await pick('haiku tier', fast), subagent: await pick('subagent model', prior.subagent ?? fast) }
+      : { haiku: fast, subagent: fast }),
+  }
 
-  const aliases = advanced
-    ? {
-        opus: await pick('opus tier', main),
-        sonnet: await pick('sonnet tier', main),
-        haiku: await pick('haiku tier', fast),
-        subagent: await pick('subagent model', fast),
-      }
-    : { opus: main, sonnet: main, haiku: fast, subagent: fast }
+  const defaultModel = await chooseStart(aliases, existing)
 
-  const mainInfo = catalog?.find((m) => m.id === aliases.opus)
+  // One context window and one output cap cover the session whichever of opus and sonnet
+  // it is on, so they have to fit the smaller of the two.
+  const sessionInfo = [aliases.opus, aliases.sonnet].map((id) => catalog?.find((m) => m.id === id))
+  const smallest = (of: (m: ModelInfo) => number | null | undefined): number | undefined => {
+    const known = sessionInfo.map((m) => (m ? of(m) : null)).filter((v): v is number => !!v)
+    return known.length ? Math.min(...known) : undefined
+  }
   const suggestedContext =
-    mainInfo?.contextLength ?? existing?.contextTokens ?? preset?.contextTokens ?? null
+    smallest((m) => m.contextLength) ?? existing?.contextTokens ?? preset?.contextTokens ?? null
 
   // Claude Code assumes 200k for any model ID it does not recognise, so getting this
   // right is the difference between using a 262k model fully and losing a quarter of it.
@@ -359,9 +383,37 @@ async function chooseModels(
 
   return {
     aliases,
-    defaultModel: aliases.opus,
+    defaultModel,
     contextTokens,
     autoCompactWindow: windowStr ? Number(windowStr) : null,
-    maxOutputTokens: existing?.maxOutputTokens ?? mainInfo?.maxOutput ?? preset?.maxOutputTokens ?? null,
+    maxOutputTokens: existing?.maxOutputTokens ?? smallest((m) => m.maxOutput) ?? preset?.maxOutputTokens ?? null,
   }
+}
+
+/**
+ * The model sessions start on. Only asked when opus and sonnet differ — with one model
+ * on both, all three choices launch the same thing. `edit` preselects what the profile
+ * has now, including a hand-written ID, so re-running it never resets the choice.
+ */
+async function chooseStart(aliases: { opus: string; sonnet: string }, existing: Profile | undefined): Promise<string> {
+  const current = existing ? startChoiceOf(existing) : 'opus'
+  const kept = current === 'custom' ? existing!.defaultModel! : null
+  if (aliases.opus === aliases.sonnet) return kept ?? aliases.opus
+
+  const choice = orCancel(
+    await p.select({
+      message: 'Start sessions on',
+      initialValue: kept ? 'keep' : current,
+      options: [
+        { value: 'opus', label: `opus      ${aliases.opus}` },
+        { value: 'sonnet', label: `sonnet    ${aliases.sonnet}` },
+        { value: 'opusplan', label: 'opusplan', hint: `plan on ${aliases.opus}, execute on ${aliases.sonnet}` },
+        ...(kept ? [{ value: 'keep', label: `keep      ${kept}`, hint: 'what this profile starts on now' }] : []),
+      ],
+    }),
+  )
+  return choice === 'opusplan' ? OPUSPLAN
+    : choice === 'sonnet' ? aliases.sonnet
+    : choice === 'keep' ? kept!
+    : aliases.opus
 }

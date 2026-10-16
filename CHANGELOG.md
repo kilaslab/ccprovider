@@ -6,6 +6,26 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-16
+
+### Added
+
+- **Opus and Sonnet are chosen separately, and sessions can start on `opusplan`.** `add` and
+  `edit` ask for an Opus, a Sonnet and a Fast model instead of one "main" model for both
+  tiers. When Opus and Sonnet differ, they ask what sessions start on: opus, sonnet, or
+  `opusplan`, which plans on the opus model and executes on the sonnet one. `-m opusplan`
+  works too, and refuses a profile with either tier unmapped.
+- Setup probes every distinct model in the profile, not just the opus one, and names the
+  slot of any model the provider rejects.
+- `ls` shows the start model when it is not the opus one.
+
+### Fixed
+
+- `edit` no longer collapses a profile's separate opus/sonnet or haiku/subagent models into
+  one each, and no longer resets the start model to opus.
+- The suggested context window and output cap fit the smaller of the opus and sonnet
+  models, since one setting covers both.
+
 ## [0.1.2] - 2026-09-30
 
 ### Fixed
@@ -87,7 +107,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kilaslab/ccprovider/releases/tag/v0.1.0

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildEnv, resolveModel, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS, MANAGED_VARS } from '../src/launch.js'
+import { buildEnv, resolveModel, startChoiceOf, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS, MANAGED_VARS } from '../src/launch.js'
 import { findPreset } from '../src/presets.js'
 import type { Profile } from '../src/types.js'
 
@@ -183,6 +183,54 @@ describe('model selection', () => {
 
   test('an unmapped tier is a clear error, not a silent Claude model ID', () => {
     expect(() => resolveModel({ ...deepseek, aliases: { opus: 'x' } }, 'haiku')).toThrow(LaunchError)
+  })
+})
+
+describe('opusplan', () => {
+  // Claude Code resolves opusplan itself: the opus slot in plan mode, the sonnet slot
+  // otherwise. So it must reach ANTHROPIC_MODEL verbatim, with both slots mapped.
+  const glm: Profile = {
+    baseUrl: 'https://api.z.ai/api/anthropic',
+    aliases: { opus: 'glm-5.3', sonnet: 'glm-5.3-flash', haiku: 'glm-5.3-flash', subagent: 'glm-5.3-flash' },
+    defaultModel: 'opusplan',
+  }
+
+  test('as the profile default it reaches Claude Code verbatim, beside both slots', () => {
+    const env = build(glm)
+    expect(env.ANTHROPIC_MODEL).toBe('opusplan')
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.3-flash')
+  })
+
+  test('-m opusplan overrides a concrete default', () => {
+    expect(build({ ...glm, defaultModel: 'glm-5.3' }, { model: 'opusplan' }).ANTHROPIC_MODEL).toBe('opusplan')
+  })
+
+  test.each([['opus'], ['sonnet']] as const)('an unmapped %s slot is a clear error', (slot) => {
+    const { [slot]: _, ...rest } = glm.aliases
+    expect(() => resolveModel({ ...glm, aliases: rest })).toThrow(LaunchError)
+    expect(() => resolveModel({ ...glm, defaultModel: null, aliases: rest }, 'opusplan')).toThrow(LaunchError)
+  })
+})
+
+describe('startChoiceOf', () => {
+  const split = { opus: 'big', sonnet: 'mid', haiku: 'small', subagent: 'small' }
+  const at = (defaultModel: string | null | undefined, aliases: Profile['aliases'] = split): Profile => ({
+    baseUrl: 'https://x.test',
+    aliases,
+    defaultModel,
+  })
+
+  test.each([
+    ['opusplan', at('opusplan'), 'opusplan'],
+    ['the sonnet model', at('mid'), 'sonnet'],
+    ['the opus model', at('big'), 'opus'],
+    ['no default', at(undefined), 'opus'],
+    ['a blank default', at(null), 'opus'],
+    ['a hand-written ID', at('something-else'), 'custom'],
+    ['one model on both tiers', at('same', { ...split, opus: 'same', sonnet: 'same' }), 'opus'],
+  ] as const)('%s', (_, profile, expected) => {
+    expect(startChoiceOf(profile)).toBe(expected)
   })
 })
 

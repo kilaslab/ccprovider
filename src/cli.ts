@@ -40,7 +40,7 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
   ${c.bold('ccprovider env')} <name>               print the exports it would set
 
 Options
-  -m, --model <tier|id>   opus | sonnet | haiku | a provider model ID
+  -m, --model <tier|id>   opus | sonnet | haiku | opusplan | a provider model ID
   --refresh               re-fetch the provider's model list
   --no-install            with add: do not install the profile as a command
   -y, --yes               skip confirmation prompts
@@ -341,7 +341,8 @@ async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retu
     )
     const a = pr.aliases
     const pair = (x?: string, y?: string) => (x === y ? (x ?? '—') : `${x ?? '—'} / ${y ?? '—'}`)
-    console.log(`  ${c.dim(`opus+sonnet ${pair(a.opus, a.sonnet)} · haiku+subagent ${pair(a.haiku, a.subagent)}`)}`)
+    const start = pr.defaultModel && pr.defaultModel !== a.opus ? ` · start ${pr.defaultModel}` : ''
+    console.log(`  ${c.dim(`opus+sonnet ${pair(a.opus, a.sonnet)} · haiku+subagent ${pair(a.haiku, a.subagent)}${start}`)}`)
   }
   return 0
 }

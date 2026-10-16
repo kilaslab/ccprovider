@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import type { Profile, AliasSlot } from './types.js'
-import { TIERS, REQUIRED_SLOTS } from './types.js'
+import { TIERS, REQUIRED_SLOTS, OPUSPLAN } from './types.js'
 
 /** Env var Claude Code reads for each alias slot. */
 export const SLOT_ENV: Record<AliasSlot, string> = {
@@ -86,8 +86,19 @@ export interface LaunchOptions {
 export class LaunchError extends Error {}
 
 /** Resolve `-m` into a concrete model ID. A tier name maps through the profile's
- *  aliases; anything else is passed through as a provider model ID. */
+ *  aliases; `opusplan` passes through for Claude Code to resolve, once both of its
+ *  tiers are mapped; anything else is passed through as a provider model ID. */
 export function resolveModel(profile: Profile, requested?: string | null): string {
+  if ((requested || profile.defaultModel) === OPUSPLAN) {
+    const unmapped = (['opus', 'sonnet'] as const).filter((t) => !profile.aliases[t])
+    if (unmapped.length) {
+      throw new LaunchError(
+        `opusplan plans on the "opus" tier and executes on "sonnet", but this profile has no model mapped to ` +
+          `${unmapped.map((t) => `"${t}"`).join(' or ')}. Run \`ccprovider edit\` to map it.`,
+      )
+    }
+    return OPUSPLAN
+  }
   if (requested) {
     const tier = TIERS.find((t) => t === requested)
     if (tier) {
@@ -107,6 +118,17 @@ export function resolveModel(profile: Profile, requested?: string | null): strin
     throw new LaunchError('This profile has no default model and no "opus" alias to fall back to.')
   }
   return fallback
+}
+
+/** Which choice the profile's start model corresponds to, so `edit` can preselect it
+ *  instead of quietly resetting it to opus. `custom` is a model ID that is neither
+ *  session tier, e.g. one written into providers.json by hand. */
+export function startChoiceOf(profile: Profile): 'opus' | 'sonnet' | 'opusplan' | 'custom' {
+  const d = profile.defaultModel
+  if (d === OPUSPLAN) return 'opusplan'
+  if (!d || d === profile.aliases.opus) return 'opus'
+  if (d === profile.aliases.sonnet) return 'sonnet'
+  return 'custom'
 }
 
 /** Slots a session can request that this profile leaves unmapped. Each one is a
