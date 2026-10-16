@@ -1,5 +1,5 @@
 import { lstatSync, existsSync, mkdirSync, readdirSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isInside } from './paths.js'
 
 /**
@@ -19,7 +19,11 @@ export const LINKED_ENTRIES = [
   'settings.json',
 ] as const
 
-export type LinkAction = 'created' | 'repaired' | 'ok' | 'removed-dangling' | 'skipped-real'
+export type LinkAction = 'created' | 'repaired' | 'ok' | 'removed-dangling' | 'skipped-real' | 'merged'
+
+/** The one entry a profile may also keep its own files in: ccprovider-installed agents
+ *  live beside the shared ones. See `reconcileMergedAgents`. */
+const MERGED_ENTRY = 'agents'
 
 export interface LinkResult {
   entry: string
@@ -40,7 +44,19 @@ export function reconcileLinks(dir: string, claudeDir: string): LinkResult[] {
   for (const entry of LINKED_ENTRIES) {
     const src = join(claudeDir, entry)
     const dest = join(dir, entry)
-    const destLink = lstatSafe(dest)
+    let destLink = lstatSafe(dest)
+
+    if (entry === MERGED_ENTRY && destLink?.isDirectory()) {
+      if (ownEntries(dest, src).length) {
+        results.push(...reconcileMergedAgents(dest, src))
+        continue
+      }
+      // Nothing of the profile's own is left, only links: go back to sharing the whole
+      // directory, so a profile without ccprovider agents behaves exactly as before.
+      for (const child of readdirSync(dest)) unlinkSync(join(dest, child))
+      rmdirSync(dest)
+      destLink = null
+    }
 
     if (!existsSync(src)) {
       // Source gone (or never existed). Drop a link pointing at nothing.
@@ -79,6 +95,69 @@ export function reconcileLinks(dir: string, claudeDir: string): LinkResult[] {
   }
 
   return results
+}
+
+/**
+ * Make the profile's `agents` a directory of its own, so an agent can be written into
+ * this profile alone. A wholesale link to ~/.claude/agents is replaced by per-file links
+ * — unlinking it never touches its target — and the shared agents stay visible.
+ */
+export function ensureOwnAgentsDir(dir: string, claudeDir: string): string {
+  const dest = join(dir, MERGED_ENTRY)
+  if (lstatSafe(dest)?.isSymbolicLink()) unlinkSync(dest)
+  mkdirSync(dest, { recursive: true })
+  reconcileMergedAgents(dest, join(claudeDir, MERGED_ENTRY))
+  return dest
+}
+
+/**
+ * The profile's own agents beside per-file links to the shared ones.
+ *
+ * Only links pointing into ~/.claude/agents are ccprovider's to manage here: they are
+ * added, repaired and dropped as the shared directory changes. Anything else — a file,
+ * or a link of the user's own to somewhere else — belongs to the profile and is never
+ * touched; on a name clash it wins over the shared agent.
+ */
+function reconcileMergedAgents(dest: string, src: string): LinkResult[] {
+  const results: LinkResult[] = []
+  const shared = existsSync(src) ? readdirSync(src) : []
+
+  for (const child of readdirSync(dest)) {
+    const p = join(dest, child)
+    if (isSharedLink(p, src) && !shared.includes(child)) {
+      unlinkSync(p)
+      results.push({ entry: `${MERGED_ENTRY}/${child}`, action: 'removed-dangling' })
+    }
+  }
+  for (const child of shared) {
+    const target = join(src, child)
+    const p = join(dest, child)
+    const st = lstatSafe(p)
+    if (!st) {
+      symlinkSync(target, p)
+    } else if (isSharedLink(p, src)) {
+      if (readlinkSync(p) !== target) {
+        unlinkSync(p)
+        symlinkSync(target, p)
+      }
+    } else {
+      results.push({ entry: `${MERGED_ENTRY}/${child}`, action: 'skipped-real', detail: `${p} is the profile's own, so the shared ${child} is not linked` })
+    }
+  }
+
+  results.push({ entry: MERGED_ENTRY, action: 'merged', detail: `${ownEntries(dest, src).length} of its own, ${shared.length} shared` })
+  return results
+}
+
+/** Entries in a profile's agents directory that are not ccprovider's links to the
+ *  shared ones. */
+function ownEntries(dest: string, src: string): string[] {
+  return readdirSync(dest).filter((child) => !isSharedLink(join(dest, child), src))
+}
+
+function isSharedLink(p: string, src: string): boolean {
+  if (!lstatSafe(p)?.isSymbolicLink()) return false
+  return dirname(readlinkSync(p)) === src
 }
 
 /**
@@ -126,11 +205,13 @@ function lstatSafe(p: string) {
 }
 
 /** Entries that are links, and where they point — for `ls` and `doctor`. */
-export function inspectLinks(dir: string): Array<{ entry: string; target: string | null; broken: boolean }> {
+export function inspectLinks(dir: string): Array<{ entry: string; target: string | null; broken: boolean; merged?: boolean }> {
   return LINKED_ENTRIES.map((entry) => {
     const p = join(dir, entry)
     const st = lstatSafe(p)
     if (!st) return { entry, target: null, broken: false }
+    // The profile's own agents beside per-file links to the shared ones: intended.
+    if (entry === MERGED_ENTRY && st.isDirectory()) return { entry, target: '(own agents + shared links)', broken: false, merged: true }
     if (!st.isSymbolicLink()) return { entry, target: '(real file, not linked)', broken: false }
     const target = readlinkSync(p)
     let broken = false

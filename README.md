@@ -127,11 +127,14 @@ config is never touched.
 | `ccprovider use <name> [-m tier]` | launch Claude Code |
 | `ccprovider edit <name>` | change models, key, endpoint, or MCP servers |
 | `ccprovider rename <old> <new>` | rename a profile, its key, its history, and its command |
-| `ccprovider rm <name>` | delete a profile, its key, its history, and its command |
+| `ccprovider rm <name>` | delete a profile, its key, its history, and its command (also `delete`) |
 | `ccprovider install [name]` | make a profile a command (all profiles if no name) |
-| `ccprovider uninstall [name]` | remove a command |
+| `ccprovider uninstall [name]` | remove a command (the profile stays) |
 | `ccprovider doctor [name]` | check everything, end to end |
 | `ccprovider env <name>` | print the exports it would set |
+| `ccprovider agents <name>` | list a profile's agents and its Explore model |
+| `ccprovider agents add\|rm <name> <id…>` | install or remove agents |
+| `ccprovider agents explore <name> <model>` | run Explore on `haiku`, `sonnet`, `opus`, a model ID, or `default` |
 
 `add` and `edit` take `--refresh` to bypass the 24-hour model-list cache. `add` takes
 `--no-install` to skip installing the command. `-y` skips confirmation prompts.
@@ -246,6 +249,35 @@ Close any running sessions in the old profile first: they keep using the old dir
 Python virtualenvs some tools create inside a profile embed absolute paths and stop
 working after the move; `rename` lists any it finds. They are rebuilt on demand, so
 deleting them is safe.
+
+## Agents
+
+`add` offers subagents from [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents)
+(MIT), with five ticked as a starting set:
+
+```
+◆  Agents  (from VoltAgent/awesome-claude-code-subagents, MIT · space to toggle)
+│  ◼ code-reviewer        ◼ architect-reviewer    ◼ test-automator
+│  ◼ debugger             ◼ security-auditor      ◻ qa-expert
+│  ◻ refactoring-specialist  ◻ performance-engineer  ◻ documentation-engineer
+```
+
+They are installed into that profile only, next to anything you keep in
+`~/.claude/agents`, which every profile still sees. Each file is pinned to one upstream
+commit and checked against a hash before it is written, so what you get is exactly
+what was reviewed. Their `model:` is a tier name, so `sonnet` on a GLM profile is a GLM
+model. `edit` shows the same list with what is installed ticked; unticking removes it.
+Later, `ccprovider agents add glm qa-expert` or `ccprovider agents rm glm debugger`.
+
+**Explore's model.** Claude Code's built-in Explore subagent runs on the session model,
+and `CLAUDE_CODE_SUBAGENT_MODEL` doesn't reach it. `add` and
+`ccprovider agents explore glm haiku` give the profile a read-only Explore on the model
+you pick; `default` hands it back to the built-in one.
+
+ccprovider only ever touches files it wrote, marked by a comment inside the frontmatter
+that never reaches the model. An agent you edit after installing it is left alone
+(`rm -y` removes it anyway). In a profile with agents of its own, one you create in a
+session stays in that profile; put agents meant for every profile in `~/.claude/agents`.
 
 ## GLM MCP tools
 

@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPaths, profileDir } from './paths.js'
 import { loadStore, saveStore, getProfile, validateName, ProfileError } from './profile.js'
 import { reconcileLinks, removeProfileDir } from './configdir.js'
+import { AGENT_CATALOG, AGENT_SOURCE, installAgents, listInstalled, readExplore, removeAgents, setExplore, syncAgents, type AgentResult } from './agents.js'
 import { buildEnv, describeEnv, findClaude, missingSlots, LaunchError } from './launch.js'
 import { detectStore } from './secrets/index.js'
 import { runDoctor, orphanChecks, worstStatus, type Check } from './doctor.js'
 import { claudeRunner, readInstalledMcp, resolveServers, resolveUnwanted, syncMcp } from './mcp.js'
 import { findPreset } from './presets.js'
+import { removeProfile } from './remove.js'
 import { renameProfile } from './rename.js'
 import { binDirOnPath, inspectShim, installCommandFor, listShims, removeShim, selfLauncher } from './shim.js'
 import { p } from './tui/prompts.js'
@@ -33,11 +35,16 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
   ${c.bold('ccprovider use')} <name> [-m tier]     launch Claude Code with that profile
   ${c.bold('ccprovider edit')} <name>              change a profile
   ${c.bold('ccprovider rename')} <old> <new>       rename a profile, its key, its history and its command
-  ${c.bold('ccprovider rm')} <name>                delete a profile and its key
+  ${c.bold('ccprovider rm')} <name>                delete a profile, its key and its command (also: delete)
   ${c.bold('ccprovider install')} [name]           make a profile a command:  glm  instead of  ccprovider use glm
   ${c.bold('ccprovider uninstall')} [name]         remove that command
   ${c.bold('ccprovider doctor')} [name]            check a profile end to end
   ${c.bold('ccprovider env')} <name>               print the exports it would set
+  ${c.bold('ccprovider agents')} <name>            list a profile's agents and its Explore model
+  ${c.bold('ccprovider agents add')} <name> [id…]  install agents (no IDs: pick from the list)
+  ${c.bold('ccprovider agents rm')} <name> <id…>   remove agents (-y also removes ones you edited)
+  ${c.bold('ccprovider agents explore')} <name> <haiku|sonnet|opus|model-id|default>
+                                      choose the model the Explore subagent runs on
 
 Options
   -m, --model <tier|id>   opus | sonnet | haiku | opusplan | a provider model ID
@@ -85,11 +92,12 @@ async function main(argv: string[]): Promise<number> {
     case 'use': return cmdUse(paths, secrets, requireName(name, 'use'), values.model ?? null, passthrough)
     case 'edit': return cmdEdit(paths, secrets, requireName(name, 'edit'), values.refresh)
     case 'rename': case 'mv': return cmdRename(paths, secrets, requireName(name, 'rename'), requireName(name2, 'rename', 'the new name'), values.yes)
-    case 'rm': case 'remove': return cmdRemove(paths, secrets, requireName(name, 'rm'), values.yes)
+    case 'rm': case 'remove': case 'delete': return cmdRemove(paths, secrets, requireName(name, 'rm'), values.yes)
     case 'install': return cmdInstall(paths, name ? validateName(name) : undefined)
     case 'uninstall': return cmdUninstall(paths, name ? validateName(name) : undefined, values.yes)
     case 'doctor': return cmdDoctor(paths, secrets, name ? validateName(name) : undefined)
     case 'env': return cmdEnv(paths, secrets, requireName(name, 'env'))
+    case 'agents': return cmdAgents(paths, positionals.slice(1), values.yes)
     default:
       console.error(`Unknown command "${cmd}".\n`)
       console.log(USAGE)
@@ -173,10 +181,114 @@ function setupMcp(paths: Paths, name: string, profile: Profile, previous: string
   )
 }
 
+/** Bring the profile's agents and Explore override in line with the wizard's answer.
+ *  Like MCP, a failure here only warns: the profile itself is already saved. */
+async function setupAgents(paths: Paths, name: string, wanted: string[], explore: string | null): Promise<string[]> {
+  const dir = profileDir(paths, name)
+  const results = [
+    ...(await syncAgents(dir, paths.claudeDir, wanted, { cacheDir: paths.cacheDir })),
+    setExplore(dir, paths.claudeDir, explore),
+  ]
+  // Back to the plain shared link when nothing of the profile's own is left.
+  reconcileLinks(dir, paths.claudeDir)
+  return results.filter((r) => r.action !== 'unchanged' && r.action !== 'absent').map(agentLine)
+}
+
+function agentLine(r: AgentResult): string {
+  const label = r.id === 'explore' ? 'Explore' : r.id
+  return r.action === 'failed' || r.action === 'kept'
+    ? c.yellow(`! agent ${label}: ${r.action === 'kept' ? 'left as it is' : 'not installed'}${r.detail ? ` — ${r.detail}` : ''}`)
+    : `${c.green('✓')} agent ${label} ${r.action === 'absent' ? 'was not installed' : r.action}`
+}
+
+const AGENT_SUBCOMMANDS = ['ls', 'list', 'add', 'rm', 'remove', 'explore']
+
+/** `ccprovider agents [ls|add|rm|explore] <name> …` — a bare `agents <name>` lists. */
+async function cmdAgents(paths: Paths, args: string[], yes: boolean): Promise<number> {
+  const [sub, rawName, ...rest] = AGENT_SUBCOMMANDS.includes(args[0] ?? '') ? args : ['ls', ...args]
+  const name = requireName(rawName, `agents ${sub}`)
+  const profile = getProfile(loadStore(paths), name)
+  const dir = profileDir(paths, name)
+  reconcileLinks(dir, paths.claudeDir)
+
+  let results: AgentResult[]
+  switch (sub) {
+    case 'add': {
+      const ids = rest
+      if (!ids.length) {
+        if (!process.stdin.isTTY) {
+          console.error(`Name the agents to add: ${AGENT_CATALOG.map((a) => a.id).join(', ')}`)
+          return 1
+        }
+        const { chooseAgents } = await import('./tui/wizard.js')
+        const installed = listInstalled(dir).filter((a) => a.known).map((a) => a.id)
+        // The list starts from what is installed, so unticking one here removes it.
+        results = await syncAgents(dir, paths.claudeDir, await chooseAgents(installed.length ? installed : null), { cacheDir: paths.cacheDir })
+        break
+      }
+      results = await installAgents(dir, paths.claudeDir, ids, { cacheDir: paths.cacheDir })
+      break
+    }
+    case 'rm': case 'remove':
+      if (!rest.length) { console.error(`\`ccprovider agents rm ${name}\` needs the agents to remove.`); return 1 }
+      results = removeAgents(dir, rest, { force: yes })
+      break
+    case 'explore': {
+      const model = rest[0]
+      if (!model) { console.error(`\`ccprovider agents explore ${name}\` needs a model: haiku, sonnet, opus, a model ID, or default.`); return 1 }
+      try {
+        results = [setExplore(dir, paths.claudeDir, model === 'default' ? null : model)]
+      } catch (e) {
+        console.error((e as Error).message)
+        return 1
+      }
+      break
+    }
+    default:
+      printAgents(paths, name, profile, dir)
+      return 0
+  }
+
+  reconcileLinks(dir, paths.claudeDir)
+  for (const r of results) console.log(agentLine(r))
+  return results.some((r) => r.action === 'failed') ? 1 : 0
+}
+
+function printAgents(paths: Paths, name: string, profile: Profile, dir: string): void {
+  const installed = new Map(listInstalled(dir).map((a) => [a.id, a]))
+  console.log(`${c.bold(name)} agents  ${c.dim(`from ${AGENT_SOURCE.repo} @ ${AGENT_SOURCE.commit.slice(0, 7)}, MIT`)}`)
+  for (const a of AGENT_CATALOG) {
+    const got = installed.get(a.id)
+    const mark = !got ? c.dim('·') : got.modified ? c.yellow('!') : c.green('✓')
+    console.log(`  ${mark} ${a.id.padEnd(24)}${c.dim(got?.modified ? 'edited since it was installed' : a.summary)}`)
+  }
+  for (const a of installed.values()) {
+    if (!a.known) console.log(`  ${c.yellow('!')} ${a.id.padEnd(24)}${c.dim('no longer in the catalog')}`)
+  }
+
+  const explore = readExplore(dir)
+  const mapped = explore ? profile.aliases[explore.model as keyof Profile['aliases']] : undefined
+  console.log(
+    `  Explore  ${explore ? `${explore.model}${mapped ? ` → ${mapped}` : ''}${explore.modified ? c.yellow('  (edited)') : ''}` : c.dim('built-in, on the session model')}`,
+  )
+  let shared = 0
+  try { shared = readdirSync(join(paths.claudeDir, 'agents')).length } catch { /* none */ }
+  if (shared) console.log(c.dim(`  + ${shared} shared from ${join(paths.claudeDir, 'agents')}`))
+  console.log(c.dim(`  ccprovider agents add|rm ${name} <id> · ccprovider agents explore ${name} <haiku|sonnet|opus|default>`))
+}
+
 async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install: boolean): Promise<number> {
   const store = loadStore(paths)
   const { runWizard } = await import('./tui/wizard.js')
   const result = await runWizard(paths, null, Object.keys(store.providers), refresh)
+  if ('editInstead' in result) return cmdEdit(paths, secrets, result.editInstead, refresh)
+  // Deleted only now that the new one is confirmed: cancelling anywhere before this
+  // leaves the old profile exactly as it was.
+  if (result.replace) {
+    const r = await removeProfile({ paths, secrets, store }, result.name)
+    for (const w of r.warnings) console.error(c.yellow(`! ${w}`))
+    console.log(c.dim(`Replaced the previous "${result.name}" profile and its session history.`))
+  }
   store.providers[result.name] = result.profile
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(result.name, result.apiKey)
@@ -184,6 +296,7 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   reconcileLinks(dir, paths.claudeDir)
 
   for (const line of setupMcp(paths, result.name, result.profile, [])) console.log(line)
+  for (const line of await setupAgents(paths, result.name, result.agents, result.explore)) console.log(line)
   const installed = install ? installCommand(paths, result.name, { automatic: true }) : null
   if (installed) {
     console.log(installed.line)
@@ -213,11 +326,14 @@ async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: bo
   const apiKey = await secrets.get(name)
   const { runWizard } = await import('./tui/wizard.js')
   const result = await runWizard(paths, { name, profile, apiKey }, [], refresh)
+  // Only `add` can be redirected to an edit; editing never asks for a name.
+  if ('editInstead' in result) return 1
   store.providers[name] = result.profile
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(name, result.apiKey)
   reconcileLinks(profileDir(paths, name), paths.claudeDir)
   for (const line of setupMcp(paths, name, result.profile, profile.mcp ?? [])) console.log(line)
+  for (const line of await setupAgents(paths, name, result.agents, result.explore)) console.log(line)
   p.outro('Updated.')
   return 0
 }
@@ -282,6 +398,11 @@ async function cmdUninstall(paths: Paths, name: string | undefined, yes: boolean
       : r === 'absent' ? `No \`${name}\` command is installed.`
       : `${join(paths.binDir, name)} is not a ccprovider launcher, so it was left alone.`,
     )
+    // Only the command goes; the profile stays. Said out loud, because "uninstall" reads
+    // like deleting it, and a later `add` of the same name is then refused.
+    if (r !== 'foreign' && name in loadStore(paths).providers) {
+      console.log(c.dim(`  The "${name}" profile is still there: \`ccprovider rm ${name}\` deletes it, \`ccprovider install ${name}\` brings the command back.`))
+    }
     return r === 'foreign' ? 1 : 0
   }
 
@@ -410,7 +531,6 @@ async function cmdRemove(
 ): Promise<number> {
   const store = loadStore(paths)
   getProfile(store, name)
-  const dir = profileDir(paths, name)
 
   if (!yes) {
     const ok = await p.confirm({
@@ -422,29 +542,11 @@ async function cmdRemove(
     if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }
   }
 
-  removeProfileDir(dir, paths.dirsRoot)
-  // The directory is already gone, so a failure here (a denied Keychain prompt) must not
-  // stop the profile leaving the config — that would leave a profile with no directory.
-  let keyWarning = ''
-  try {
-    await secrets.delete(name)
-  } catch (e) {
-    keyWarning = `The key for "${name}" is still in the secret store (${(e as Error).message}); it is unused and safe to delete.`
-  }
-  delete store.providers[name]
-  saveStore(paths, store)
-  if (keyWarning) console.error(c.yellow(`! ${keyWarning}`))
+  const r = await removeProfile({ paths, secrets, store }, name)
+  for (const w of r.warnings) console.error(c.yellow(`! ${w}`))
   console.log(`Removed "${name}". Your ~/.claude is untouched.`)
-
-  // Only a launcher ccprovider wrote is ever deleted; `kimi` or `claude` in the same
-  // directory belong to someone else even if a profile once shared the name.
-  try {
-    const r = removeShim(paths, name)
-    if (r === 'removed') console.log(`Removed the \`${name}\` command.`)
-    else if (r === 'foreign') console.log(c.dim(`${join(paths.binDir, name)} is not a ccprovider launcher, so it was left alone.`))
-  } catch (e) {
-    console.error(c.yellow(`! Could not remove the \`${name}\` command: ${(e as Error).message}`))
-  }
+  if (r.command === 'removed') console.log(`Removed the \`${name}\` command.`)
+  else if (r.command === 'foreign') console.log(c.dim(`${join(paths.binDir, name)} is not a ccprovider launcher, so it was left alone.`))
   return 0
 }
 

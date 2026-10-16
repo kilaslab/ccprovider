@@ -4,7 +4,9 @@ import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
 import { validateName } from '../profile.js'
 import { regionFor } from '../mcp.js'
+import { AGENT_CATALOG, AGENT_SOURCE, listInstalled, readExplore } from '../agents.js'
 import { startChoiceOf } from '../launch.js'
+import { profileDir } from '../paths.js'
 import { OPUSPLAN, type Profile, type Preset } from '../types.js'
 import type { Paths } from '../paths.js'
 
@@ -13,6 +15,18 @@ export interface WizardResult {
   profile: Profile
   /** Null for a Claude subscription profile, which stores no key. */
   apiKey: string | null
+  /** Catalog agents the profile should have. Written by the caller, like MCP. */
+  agents: string[]
+  /** Model for the Explore override, or null for Claude Code's built-in Explore. */
+  explore: string | null
+  /** The name was taken and the user chose to replace that profile: the caller deletes
+   *  it before saving this one, so cancelling the wizard loses nothing. */
+  replace: boolean
+}
+
+/** The name was taken and the user chose to edit that profile instead of adding one. */
+export interface EditInstead {
+  editInstead: string
 }
 
 const CLAUDE_CHOICE = 'claude'
@@ -22,7 +36,7 @@ export async function runWizard(
   existing: { name: string; profile: Profile; apiKey: string | null } | null,
   takenNames: string[],
   refresh = false,
-): Promise<WizardResult> {
+): Promise<WizardResult | EditInstead> {
   p.intro(existing ? `Edit profile "${existing.name}"` : 'Add a Claude Code provider')
 
   // ---- 1. provider
@@ -38,51 +52,30 @@ export async function runWizard(
         }),
       )
   if (!existing && presetId === CLAUDE_CHOICE) {
-    const name = validateName(
-      orCancel(
-        await p.text({
-          message: 'Profile name',
-          placeholder: 'work',
-          validate: (v) => {
-            if (!v) return 'A name is required, e.g. "work".'
-            let n: string
-            try { n = validateName(v) } catch (e) { return (e as Error).message }
-            if (takenNames.some((t) => t.toLowerCase() === n)) {
-              return `"${n}" already exists — pick another name.`
-            }
-          },
-        }),
-      ),
-    )
+    const picked = await chooseName(takenNames, 'work')
+    if ('editInstead' in picked) return picked
+    const { name, replace } = picked
     return {
       name,
       profile: { kind: 'oauth', baseUrl: '', aliases: {}, preset: CLAUDE_CHOICE, createdAt: new Date().toISOString() },
       apiKey: null,
+      agents: await chooseAgents(null),
+      explore: await chooseExplore({}, null),
+      replace: replace && (orCancel(await p.confirm({ message: saveMessage(name, true), initialValue: true })) || exitUnsaved()),
     }
   }
   const preset = findPreset(presetId as string)
 
   // ---- 2. name
-  const name = existing
-    ? existing.name
-    : validateName(
-        orCancel(
-          await p.text({
-            message: 'Profile name',
-            placeholder: presetId as string,
-            defaultValue: presetId as string,
-            validate: (v) => {
-              const raw = v || (presetId as string)
-              let n: string
-              try { n = validateName(raw) } catch (e) { return (e as Error).message }
-              // Case-insensitive: "DeepSeek" and "deepseek" would share one directory.
-              if (takenNames.some((t) => t.toLowerCase() === n)) {
-                return `"${n}" already exists — pick another name or run \`ccprovider edit ${n}\`.`
-              }
-            },
-          }),
-        ) || (presetId as string),
-      )
+  let name: string
+  let replace = false
+  if (existing) {
+    name = existing.name
+  } else {
+    const picked = await chooseName(takenNames, presetId as string, presetId as string)
+    if ('editInstead' in picked) return picked
+    ;({ name, replace } = picked)
+  }
 
   // ---- 3. base URL
   //
@@ -198,6 +191,11 @@ export async function runWizard(
   // ---- 9. the provider's own MCP servers
   const mcp = await chooseMcp(preset, baseUrl, existing?.profile)
 
+  // ---- 10. agents, and the model Explore runs on
+  const dir = profileDir(paths, name)
+  const agents = await chooseAgents(existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : null)
+  const explore = await chooseExplore(aliases, existing ? (readExplore(dir)?.model ?? null) : null)
+
   const profile: Profile = {
     baseUrl,
     aliases,
@@ -222,14 +220,108 @@ export async function runWizard(
       `start      ${defaultModel === OPUSPLAN ? `opusplan (plan ${aliases.opus} → execute ${aliases.sonnet})` : defaultModel}`,
       contextTokens ? `context    ${contextTokens.toLocaleString()} tokens` : '',
       autoCompactWindow ? `compact at ${autoCompactWindow.toLocaleString()} tokens` : '',
+      `agents     ${agents.length ? agents.join(', ') : 'none'}`,
+      `explore    ${explore ? `${explore}${aliases[explore as keyof typeof aliases] ? ` (${aliases[explore as keyof typeof aliases]})` : ''}` : 'built-in, on the session model'}`,
     ].filter(Boolean).join('\n'),
     name,
   )
 
-  const ok = orCancel(await p.confirm({ message: 'Save this profile?', initialValue: true }))
+  const ok = orCancel(await p.confirm({ message: saveMessage(name, replace), initialValue: true }))
   if (!ok) { p.cancel('Nothing was saved.'); process.exit(1) }
 
-  return { name, profile, apiKey }
+  return { name, profile, apiKey, agents, explore, replace }
+}
+
+/**
+ * Which catalog agents the profile gets. A new profile starts with the recommended
+ * ones ticked; `edit` and `agents add` start from what is installed, so unticking one
+ * removes it.
+ */
+export async function chooseAgents(installed: string[] | null): Promise<string[]> {
+  return orCancel(
+    await p.multiselect({
+      message: `Agents  (from ${AGENT_SOURCE.repo}, MIT · space to toggle)`,
+      options: AGENT_CATALOG.map((a) => ({ value: a.id, label: a.id, hint: a.summary })),
+      initialValues: installed ?? AGENT_CATALOG.filter((a) => a.recommended).map((a) => a.id),
+      required: false,
+    }),
+  )
+}
+
+/** The model Claude Code's Explore subagent runs on. It follows the session model unless
+ *  overridden, and `CLAUDE_CODE_SUBAGENT_MODEL` does not reach it — an override file is
+ *  the only per-Explore route. A tier name keeps following the profile's mapping. */
+async function chooseExplore(aliases: Partial<Record<'opus' | 'sonnet' | 'haiku', string>>, current: string | null): Promise<string | null> {
+  const tiers = ['haiku', 'sonnet', 'opus'] as const
+  const custom = current && !(tiers as readonly string[]).includes(current) ? current : null
+  const choice = orCancel(
+    await p.select({
+      message: 'Explore subagent model',
+      initialValue: current ?? 'default',
+      options: [
+        { value: 'default', label: 'default', hint: 'the built-in Explore, on the session model' },
+        ...tiers.map((t) => ({ value: t, label: aliases[t] ? `${t.padEnd(8)}  ${aliases[t]}` : t })),
+        ...(custom ? [{ value: custom, label: `keep      ${custom}`, hint: 'what this profile uses now' }] : []),
+      ],
+    }),
+  )
+  return choice === 'default' ? null : choice
+}
+
+/** The last question before anything is written. Replacing says what it deletes,
+ *  since that is the one irreversible part of `add`. */
+function saveMessage(name: string, replace: boolean): string {
+  return replace
+    ? `Save, replacing the existing "${name}"? Its key, session history and command are deleted.`
+    : 'Save this profile?'
+}
+
+function exitUnsaved(): never {
+  p.cancel('Nothing was saved.')
+  process.exit(1)
+}
+
+/**
+ * The new profile's name. A taken one is a choice, not a dead end: someone re-adding a
+ * profile usually means to replace it, and a validation error they cancel out of is
+ * erased from the screen with the prompt, leaving only "Cancelled".
+ */
+async function chooseName(
+  takenNames: string[],
+  placeholder: string,
+  fallback?: string,
+): Promise<{ name: string; replace: boolean } | EditInstead> {
+  for (;;) {
+    const raw =
+      orCancel(
+        await p.text({
+          message: 'Profile name',
+          placeholder,
+          ...(fallback ? { defaultValue: fallback } : {}),
+          validate: (v) => {
+            const n = v || fallback
+            if (!n) return `A name is required, e.g. "${placeholder}".`
+            try { validateName(n) } catch (e) { return (e as Error).message }
+          },
+        }),
+      ) || fallback!
+    const name = validateName(raw)
+    // Case-insensitive: "DeepSeek" and "deepseek" would share one directory.
+    if (!takenNames.some((t) => t.toLowerCase() === name)) return { name, replace: false }
+
+    const what = orCancel(
+      await p.select({
+        message: `A profile named "${name}" already exists`,
+        options: [
+          { value: 'replace', label: `Replace "${name}"`, hint: 'its key, session history and command are deleted once you save the new one' },
+          { value: 'edit', label: `Edit "${name}" instead`, hint: 'keeps its key and history' },
+          { value: 'rename', label: 'Use another name' },
+        ],
+      }),
+    )
+    if (what === 'edit') return { editInstead: name }
+    if (what === 'replace') return { name, replace: true }
+  }
 }
 
 /**

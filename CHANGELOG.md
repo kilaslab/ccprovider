@@ -6,6 +6,33 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-16
+
+### Added
+
+- **Agents per profile, from an open-source collection.** `add` offers nine subagents
+  from VoltAgent/awesome-claude-code-subagents (MIT), with code-reviewer,
+  architect-reviewer, test-automator, debugger and security-auditor ticked. They are
+  installed into that profile only, pinned to one upstream commit and hash-checked, with
+  the source and licence in a frontmatter comment that never reaches the model. `edit`
+  and the new `ccprovider agents [add|rm] <name>` change them later.
+- **Explore's model per profile.** `add` and `ccprovider agents explore <name> <model>`
+  give the profile a read-only Explore subagent on the model of your choice, such as
+  the cheap haiku slot. `CLAUDE_CODE_SUBAGENT_MODEL` does not reach the built-in one.
+- A profile's `agents` directory can now hold its own agents beside per-file links to
+  `~/.claude/agents`, and goes back to the plain shared link once it has none.
+  `doctor` reports installed agents and any you have edited.
+- `ccprovider delete <name>` works as `rm`.
+
+### Fixed
+
+- **Re-adding a profile under a name that already exists.** `add` rejected the name with
+  a validation error, and cancelling out of it erased the error, leaving only "Cancelled
+  — nothing was saved". It now offers to replace that profile (deleted only once you
+  confirm the new one), edit it instead, or use another name.
+- `uninstall <name>` says the profile is still there, and how to delete it or bring the
+  command back. It removes only the command, which read like deleting the profile.
+
 ## [0.1.3] - 2026-10-16
 
 ### Added
@@ -107,7 +134,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kilaslab/ccprovider/compare/v0.1.0...v0.1.1

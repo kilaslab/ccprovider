@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { inspectLinks, reconcileLinks, removeProfileDir, LINKED_ENTRIES } from '../src/configdir.js'
+import { ensureOwnAgentsDir, inspectLinks, reconcileLinks, removeProfileDir, LINKED_ENTRIES } from '../src/configdir.js'
 import { getPaths, profileDir, isInside } from '../src/paths.js'
 
 let home: string
@@ -81,6 +81,81 @@ describe('reconcileLinks', () => {
     const results = reconcileLinks(dir, claudeDir)
     expect(results.find((r) => r.entry === 'skills')?.action).toBe('skipped-real')
     expect(readFileSync(join(dir, 'skills', 'mine.md'), 'utf8')).toBe('hand-placed')
+  })
+})
+
+describe('agents — the profile’s own beside the shared ones', () => {
+  const own = () => join(dir, 'agents')
+  beforeEach(() => {
+    mkdirSync(join(claudeDir, 'agents'))
+    writeFileSync(join(claudeDir, 'agents', 'shared.md'), 'shared agent')
+  })
+
+  test('ensureOwnAgentsDir turns the wholesale link into a directory without touching ~/.claude', () => {
+    reconcileLinks(dir, claudeDir)
+    expect(lstatSync(own()).isSymbolicLink()).toBe(true)
+    ensureOwnAgentsDir(dir, claudeDir)
+    expect(lstatSync(own()).isDirectory()).toBe(true)
+    expect(readlinkSync(join(own(), 'shared.md'))).toBe(join(claudeDir, 'agents', 'shared.md'))
+    expect(readFileSync(join(claudeDir, 'agents', 'shared.md'), 'utf8')).toBe('shared agent')
+  })
+
+  test('with an own agent, shared ones are linked one by one and the own one is left alone', () => {
+    mkdirSync(own(), { recursive: true })
+    writeFileSync(join(own(), 'mine.md'), 'own agent')
+    const results = reconcileLinks(dir, claudeDir)
+    expect(results.find((r) => r.entry === 'agents')?.action).toBe('merged')
+    expect(readlinkSync(join(own(), 'shared.md'))).toBe(join(claudeDir, 'agents', 'shared.md'))
+    expect(readFileSync(join(own(), 'mine.md'), 'utf8')).toBe('own agent')
+  })
+
+  test('a shared agent added later shows up; one deleted from ~/.claude is unlinked', () => {
+    mkdirSync(own(), { recursive: true })
+    writeFileSync(join(own(), 'mine.md'), 'own agent')
+    reconcileLinks(dir, claudeDir)
+    writeFileSync(join(claudeDir, 'agents', 'later.md'), 'later')
+    rmSync(join(claudeDir, 'agents', 'shared.md'))
+    reconcileLinks(dir, claudeDir)
+    expect(lstatSync(join(own(), 'later.md')).isSymbolicLink()).toBe(true)
+    expect(existsSync(join(own(), 'shared.md'))).toBe(false)
+  })
+
+  test('on a name clash the own agent wins and the clash is reported', () => {
+    mkdirSync(own(), { recursive: true })
+    writeFileSync(join(own(), 'shared.md'), 'own version')
+    const results = reconcileLinks(dir, claudeDir)
+    expect(results.find((r) => r.entry === 'agents/shared.md')?.action).toBe('skipped-real')
+    expect(readFileSync(join(own(), 'shared.md'), 'utf8')).toBe('own version')
+  })
+
+  test('once no own agent is left it goes back to the plain shared link', () => {
+    ensureOwnAgentsDir(dir, claudeDir)
+    const results = reconcileLinks(dir, claudeDir)
+    expect(results.find((r) => r.entry === 'agents')?.action).toBe('created')
+    expect(readlinkSync(own())).toBe(join(claudeDir, 'agents'))
+  })
+
+  test('a link of the user’s own pointing elsewhere counts as theirs', () => {
+    mkdirSync(own(), { recursive: true })
+    symlinkSync(join(home, 'elsewhere.md'), join(own(), 'elsewhere.md'))
+    reconcileLinks(dir, claudeDir)
+    expect(lstatSync(own()).isDirectory()).toBe(true)
+    expect(readlinkSync(join(own(), 'elsewhere.md'))).toBe(join(home, 'elsewhere.md'))
+  })
+
+  test('removing the profile leaves the shared agents intact', () => {
+    mkdirSync(own(), { recursive: true })
+    writeFileSync(join(own(), 'mine.md'), 'own agent')
+    reconcileLinks(dir, claudeDir)
+    removeProfileDir(dir, dirsRoot)
+    expect(readFileSync(join(claudeDir, 'agents', 'shared.md'), 'utf8')).toBe('shared agent')
+  })
+
+  test('inspectLinks reports a merged directory as merged, not as a stray real file', () => {
+    mkdirSync(own(), { recursive: true })
+    writeFileSync(join(own(), 'mine.md'), 'own agent')
+    reconcileLinks(dir, claudeDir)
+    expect(inspectLinks(dir).find((r) => r.entry === 'agents')).toMatchObject({ merged: true, broken: false })
   })
 })
 

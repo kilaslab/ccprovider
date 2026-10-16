@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { orphanChecks, runDoctor, type Check, type Runtime } from '../src/doctor.js'
+import { setExplore } from '../src/agents.js'
 import { serverJson } from '../src/mcp.js'
 import { findPreset } from '../src/presets.js'
 import { profileDir, type Paths } from '../src/paths.js'
@@ -273,6 +274,29 @@ describe('MCP checks', () => {
     test('is not checked when only http servers are enabled', async () => {
       expect(find(await doctor(profile({ mcp: ['zread', 'web-reader'] })), label)).toBeUndefined()
     })
+  })
+})
+
+describe('agents', () => {
+  test('a profile with agents of its own is not reported as a stray real directory', async () => {
+    setExplore(dir, paths.claudeDir, 'haiku')
+    expect(find(await doctor(profile()), 'shared config links')?.status).toBe('ok')
+  })
+
+  test('names the Explore model and stays quiet otherwise', async () => {
+    expect(find(await doctor(profile()), 'agents')).toBeUndefined()
+    setExplore(dir, paths.claudeDir, 'haiku')
+    const c = find(await doctor(profile()), 'agents')
+    expect(c?.status).toBe('ok')
+    expect(c?.detail).toContain('Explore on haiku')
+  })
+
+  test('an installed agent edited since is a warning that names it', async () => {
+    mkdirSync(join(dir, 'agents'), { recursive: true })
+    writeFileSync(join(dir, 'agents', 'debugger.md'), '---\n# ccprovider-agent id=debugger - managed by ccprovider\nname: debugger\n---\nchanged\n')
+    const c = find(await doctor(profile()), 'agents')
+    expect(c?.status).toBe('warn')
+    expect(c?.detail).toContain('edited: debugger')
   })
 })
 

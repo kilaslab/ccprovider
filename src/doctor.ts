@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { Paths } from './paths.js'
 import { profileDir } from './paths.js'
 import type { Profile, AliasSlot } from './types.js'
+import { listInstalled, readExplore } from './agents.js'
 import { inspectLinks, LINKED_ENTRIES } from './configdir.js'
 import { missingSlots, SLOT_ENV, findClaude, MANAGED_VARS, STRIPPED_VARS } from './launch.js'
 import { compareInstalled, HELPER_KEY_RE, readInstalledMcp, registeredIds, resolveServers } from './mcp.js'
@@ -84,6 +85,8 @@ export async function runDoctor(
     checks.push(commandCheck(name, paths, opts.env ?? process.env))
     const s = settingsCheck(dir)
     if (s) checks.push(s)
+    const a = agentsCheck(name, dir)
+    if (a) checks.push(a)
     return checks
   }
 
@@ -110,6 +113,8 @@ export async function runDoctor(
   checks.push(commandCheck(name, paths, env))
   const settings = settingsCheck(dir)
   if (settings) checks.push(settings)
+  const agents = agentsCheck(name, dir)
+  if (agents) checks.push(agents)
   checks.push(...mcpChecks(name, profile, dir, key, opts.runtime))
 
   if (opts.skipNetwork || !key) return checks
@@ -142,6 +147,27 @@ export async function runDoctor(
   }
 
   return checks
+}
+
+/** The profile's ccprovider-installed agents and Explore override. Silent when there
+ *  are none — the built-in agents are not something to report on. */
+function agentsCheck(name: string, dir: string): Check | null {
+  const installed = listInstalled(dir)
+  const explore = readExplore(dir)
+  if (!installed.length && !explore) return null
+  const edited = [...installed.filter((a) => a.modified).map((a) => a.id), ...(explore?.modified ? ['Explore'] : [])]
+  const unknown = installed.filter((a) => !a.known).map((a) => a.id)
+  const parts = [
+    installed.length ? `${installed.length} installed (${installed.map((a) => a.id).join(', ')})` : '',
+    explore ? `Explore on ${explore.model}` : '',
+    edited.length ? `edited: ${edited.join(', ')} — kept as they are` : '',
+    unknown.length ? `no longer in the catalog: ${unknown.join(', ')} — \`ccprovider agents rm ${name} <id>\`` : '',
+  ]
+  return {
+    label: 'agents',
+    status: edited.length || unknown.length ? 'warn' : 'ok',
+    detail: parts.filter(Boolean).join(' · '),
+  }
 }
 
 /** Does typing `<name>` in a shell run this profile? */
