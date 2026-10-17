@@ -40,7 +40,7 @@ export function validateStore(raw: unknown, source = 'config'): ProfileStore {
     // Validate the key, not just the value: it becomes a directory name and a keychain
     // account, and reaches mkdir/symlink through profileDir().
     const key = validateName(name)
-    if (key in out) {
+    if (Object.hasOwn(out, key)) {
       throw new ProfileError(
         `${source}: "${name}" collides with another profile once case is normalised. ` +
           `Rename one of them in ${source}.`,
@@ -153,7 +153,9 @@ export function validateName(name: string): string {
 }
 
 export function getProfile(store: ProfileStore, name: string): Profile {
-  const p = store.providers[validateName(name)]
+  const key = validateName(name)
+  // Own keys only: `constructor` is a valid profile name and an inherited property of every object.
+  const p = Object.hasOwn(store.providers, key) ? store.providers[key] : undefined
   if (!p) {
     const known = Object.keys(store.providers)
     throw new ProfileError(

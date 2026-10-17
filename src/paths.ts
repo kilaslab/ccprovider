@@ -10,6 +10,13 @@ export interface Paths {
   /** Where per-profile launcher commands are installed. Must be on the user's PATH
    *  for `glm` to resolve as a command; `doctor` checks that it is. */
   binDir: string
+  /** Where the wrapper that makes a profile the plain `claude` command lives. A directory
+   *  of its own, because `claude` in binDir would be Claude Code's own symlink, rewritten
+   *  by its updater. It only takes effect once it comes before that `claude` on PATH. */
+  defaultBinDir: string
+  /** One token-usage ledger per profile (`<name>.json`). Data and not cache: it outlives
+   *  the transcripts it was read from, which Claude Code deletes after a while. */
+  usageDir: string
 }
 
 function xdg(env: NodeJS.ProcessEnv, varName: string, fallback: string, home: string): string {
@@ -44,6 +51,10 @@ export function getPaths(env: NodeJS.ProcessEnv = process.env, home = homedir())
     // the PATH of anyone who can run this tool. Overridable for tests and for people
     // who keep launchers elsewhere.
     binDir: env.CCPROVIDER_BIN_DIR?.startsWith('/') ? env.CCPROVIDER_BIN_DIR : join(home, '.local', 'bin'),
+    defaultBinDir: env.CCPROVIDER_DEFAULT_BIN_DIR?.startsWith('/')
+      ? env.CCPROVIDER_DEFAULT_BIN_DIR
+      : join(xdg(env, 'XDG_DATA_HOME', '.local/share', home), 'ccprovider', 'bin'),
+    usageDir: join(xdg(env, 'XDG_DATA_HOME', '.local/share', home), 'ccprovider', 'usage'),
   }
 }
 

@@ -18,6 +18,8 @@ beforeEach(() => {
     dirsRoot: join(home, '.local/share/ccprovider/dirs'),
     cacheDir: join(home, '.cache/ccprovider'),
     binDir: join(home, '.local/bin'),
+    defaultBinDir: join(home, '.local/share/ccprovider/bin'),
+    usageDir: join(home, '.local/share/ccprovider/usage'),
   }
 })
 afterEach(() => rmSync(home, { recursive: true, force: true }))
@@ -227,5 +229,27 @@ describe('secret stores', () => {
     v.x = [iv, tag, Buffer.from('tampered').toString('base64')].join('.')
     writeFileSync(vaultPath, JSON.stringify(v))
     expect(await s.get('x')).toBeNull()
+  })
+})
+
+describe('profile names that every object already has', () => {
+  // `constructor` is a valid profile name. Looked up on a plain object it finds Object, which
+  // is truthy, so "no such profile" was answered as if one existed.
+  test('getProfile does not find one that was never added', () => {
+    const other = { baseUrl: 'https://x.dev', aliases: { opus: 'a', sonnet: 'a', haiku: 'b', subagent: 'b' } }
+    const store = { version: 1 as const, providers: { other } }
+    expect(() => getProfile(store, 'constructor')).toThrow(/No profile named "constructor"/)
+    expect(() => getProfile(store, 'valueof')).toThrow(/No profile named/)
+  })
+
+  test('and finds one that was', () => {
+    const profile = { baseUrl: 'https://x.dev', aliases: { opus: 'a', sonnet: 'a', haiku: 'b', subagent: 'b' } }
+    expect(getProfile({ version: 1, providers: { constructor: profile } }, 'constructor')).toBe(profile)
+  })
+
+  test('a store holding one is valid, and one that really collides still is not', () => {
+    const profile = { baseUrl: 'https://x.dev', aliases: { opus: 'a', sonnet: 'a', haiku: 'b', subagent: 'b' } }
+    expect(Object.keys(validateStore({ version: 1, providers: { constructor: profile } }).providers)).toEqual(['constructor'])
+    expect(() => validateStore({ version: 1, providers: { glm: profile, GLM: profile } })).toThrow(/collides/)
   })
 })

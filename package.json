@@ -1,6 +1,6 @@
 {
   "name": "ccprovider",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Provider profiles for Claude Code — run it against DeepSeek, OpenRouter, Kimi, GLM and other Anthropic-compatible endpoints, each with isolated session state and correct model tier mapping.",
   "keywords": [
     "claude-code",
@@ -37,6 +37,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

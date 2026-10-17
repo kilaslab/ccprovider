@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'bun:test'
-import { buildEnv, resolveModel, startChoiceOf, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS, MANAGED_VARS } from '../src/launch.js'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { renderShim } from '../src/shim.js'
+import { buildEnv, CREDENTIAL_VARS, findClaude, passThroughNotice, resolveModel, startChoiceOf, missingSlots, redact, describeEnv, LaunchError, STRIPPED_VARS, MANAGED_VARS } from '../src/launch.js'
 import { findPreset } from '../src/presets.js'
 import type { Profile } from '../src/types.js'
 
@@ -308,5 +312,90 @@ describe('every shipped preset produces a working environment', () => {
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBeTruthy()
     // Without this every preset silently truncates to Claude Code's assumed 200k.
     expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeTruthy()
+  })
+})
+
+describe('CREDENTIAL_VARS', () => {
+  test('are all variables `use` strips, so `env` and `use` agree about them', () => {
+    for (const v of CREDENTIAL_VARS) expect((STRIPPED_VARS as readonly string[]).includes(v)).toBe(true)
+  })
+})
+
+describe('passThroughNotice', () => {
+  // The default wrapper does not move a `claude` inside a ccprovider session. In a hook that is
+  // right and silent; typed at a prompt in a tmux started from a session it would be a surprise,
+  // so a person at a terminal is told, and a hook's stderr is left clean.
+  test('is said to a terminal, and to nothing else', () => {
+    expect(passThroughNotice(true)).toContain('inside a ccprovider session')
+    expect(passThroughNotice(true)).toContain('--off')
+    expect(passThroughNotice(false)).toBeNull()
+  })
+})
+
+describe('findClaude', () => {
+  let dir: string
+  const claudeIn = (name: string) => {
+    mkdirSync(join(dir, name), { recursive: true })
+    const p = join(dir, name, 'claude')
+    writeFileSync(p, '#!/bin/sh\n', { mode: 0o755 })
+    return p
+  }
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ccprov-find-')) })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  test('is the first claude on PATH', () => {
+    const real = claudeIn('real')
+    claudeIn('later')
+    expect(findClaude({ PATH: `${join(dir, 'real')}:${join(dir, 'later')}` })).toBe(real)
+  })
+
+  // Regression: `ccprovider default` puts a wrapper called `claude` in front of the real
+  // one, and the wrapper runs `ccprovider use`, which looks `claude` up again. Taking
+  // PATH's first match would find the wrapper and run it forever.
+  test('steps over the default wrapper to the real claude behind it', () => {
+    claudeIn('wrapper')
+    const real = claudeIn('real')
+    const env = { PATH: `${join(dir, 'wrapper')}:${join(dir, 'real')}` }
+    expect(findClaude(env, [join(dir, 'wrapper')])).toBe(real)
+  })
+
+  // Regression: the directory is computed from today's settings. A wrapper left at an old
+  // location (CCPROVIDER_DEFAULT_BIN_DIR or XDG_DATA_HOME changed since `default` was run) is
+  // not in the directory it is told to skip, and was found as `claude`: an endless exec loop.
+  test('steps over a default wrapper by what it is, wherever it sits', () => {
+    mkdirSync(join(dir, 'old-place'), { recursive: true })
+    const wrapper = join(dir, 'old-place', 'claude')
+    writeFileSync(wrapper, renderShim(['/opt/cc/ccprovider'], 'glm', undefined, 'default'), { mode: 0o755 })
+    const real = claudeIn('real')
+    expect(findClaude({ PATH: `${join(dir, 'old-place')}:${join(dir, 'real')}` }, [join(dir, 'somewhere-else')])).toBe(real)
+  })
+
+  // A dotfiles manager or an `ln -s` puts a link to the wrapper where PATH finds it first. The
+  // link is the wrapper, and running it is the same endless loop.
+  test('steps over a symlink to the default wrapper too', () => {
+    mkdirSync(join(dir, 'w'), { recursive: true })
+    const wrapper = join(dir, 'w', 'claude')
+    writeFileSync(wrapper, renderShim(['/opt/cc/ccprovider'], 'glm', undefined, 'default'), { mode: 0o755 })
+    mkdirSync(join(dir, 'links'), { recursive: true })
+    symlinkSync(wrapper, join(dir, 'links', 'claude'))
+    const real = claudeIn('real')
+    expect(findClaude({ PATH: `${join(dir, 'links')}:${join(dir, 'real')}` })).toBe(real)
+  })
+
+  test('does not mistake a script of someone else\'s for the wrapper', () => {
+    mkdirSync(join(dir, 'mine'), { recursive: true })
+    const mine = join(dir, 'mine', 'claude')
+    writeFileSync(mine, '#!/bin/sh\n# my own wrapper, nothing to do with ccprovider\n', { mode: 0o755 })
+    expect(findClaude({ PATH: join(dir, 'mine') })).toBe(mine)
+  })
+
+  test('says to install Claude Code when only the wrapper is there', () => {
+    claudeIn('wrapper')
+    expect(() => findClaude({ PATH: join(dir, 'wrapper') }, [join(dir, 'wrapper')])).toThrow(LaunchError)
+    expect(() => findClaude({ PATH: join(dir, 'wrapper') }, [join(dir, 'wrapper')])).toThrow(/Install Claude Code/)
+  })
+
+  test('says the same when PATH has no claude at all', () => {
+    expect(() => findClaude({ PATH: join(dir, 'empty') })).toThrow(/Install Claude Code/)
   })
 })

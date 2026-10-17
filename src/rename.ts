@@ -4,8 +4,9 @@ import { profileDir, type Paths } from './paths.js'
 import { getProfile, ProfileError, saveStore, validateName } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
 import { shellQuote } from './shell.js'
-import { commandName, inspectShim, installShim, removeShim } from './shim.js'
+import { commandName, inspectShim, installDefaultShim, installShim, readDefaultShimInfo, removeShim } from './shim.js'
 import type { Profile, ProfileStore } from './types.js'
+import { ledgerFiles, ledgerPath } from './usage.js'
 
 export interface RenameDeps {
   paths: Paths
@@ -20,6 +21,8 @@ export interface RenameDeps {
 export interface RenameResult {
   /** Whether a launcher command was moved along with the profile. */
   command: 'moved' | 'none'
+  /** Set when the plain `claude` command ran this profile and was pointed at the new name. */
+  defaultCommand?: 'moved'
   /** Things that went wrong after the rename was already committed. Never fatal. */
   warnings: string[]
   /** Python virtualenvs inside the profile that still point at the old directory. */
@@ -45,7 +48,7 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
   const to = validateName(toRaw)
   const profile = getProfile(store, from)
   if (from === to) throw new ProfileError(`"${from}" is already called that.`)
-  if (to in store.providers) throw new ProfileError(`A profile named "${to}" already exists.`)
+  if (Object.hasOwn(store.providers, to)) throw new ProfileError(`A profile named "${to}" already exists.`)
 
   const dirFrom = profileDir(paths, from)
   const dirTo = profileDir(paths, to)
@@ -88,6 +91,27 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
     }
   }
 
+  // The usage ledger is named after the profile too, and so are the backup a rebuild leaves and
+  // any file set aside: whatever there is of them moves along.
+  const stem = ledgerPath(paths, from)
+  const ledgers = ledgerFiles(paths, from).map((f) => [f, ledgerPath(paths, to) + f.slice(stem.length)] as const)
+  // Usage already filed under the new name is either a deleted profile's, which this one must
+  // not inherit, or what an interrupted rename of this very profile left. Nothing tells them
+  // apart, so neither is guessed (the profile directory is handled the same way below).
+  const taken = ledgerFiles(paths, to)[0]
+  if (taken) {
+    const back = ledgerPath(paths, from) + taken.slice(ledgerPath(paths, to).length)
+    throw new ProfileError(
+      `${taken} already holds usage under the new name. If it is left over from a deleted profile, move it aside. ` +
+        `If an earlier rename of "${from}" was interrupted, it is this profile's: put it back with ` +
+        `\`mv ${shellQuote(taken)} ${shellQuote(back)}\`. Then run the rename again.`,
+    )
+  }
+
+  // The default wrapper is a further identity: it names the profile it runs.
+  const defaultBefore = readDefaultShimInfo(paths)
+  const wasDefault = defaultBefore?.profile === from
+
   // ---- mutate, with an undo for each step
   const undo: Array<() => void | Promise<void>> = []
   try {
@@ -99,9 +123,19 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
       renameSync(dirFrom, dirTo)
       undo.push(() => renameSync(dirTo, dirFrom))
     }
+    for (const [source, target] of ledgers) {
+      if (!lstatSafe(source)) continue
+      renameSync(source, target)
+      undo.push(() => renameSync(target, source))
+    }
     if (hadCommand) {
       installShim(paths, to, launcher)
       undo.push(() => void removeShim(paths, to))
+    }
+    if (wasDefault) {
+      installDefaultShim(paths, to, launcher)
+      // As it was, with its own launcher and node, not rewritten for whatever ccprovider ran this.
+      undo.push(() => void installDefaultShim(paths, from, defaultBefore!.launcher, defaultBefore!.node))
     }
 
     // Rebuilt rather than delete+add so the profile keeps its place in the list.
@@ -142,7 +176,12 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
     }
   }
 
-  return { command: hadCommand ? 'moved' : 'none', warnings, staleVenvs: staleVirtualenvs(dirTo, dirFrom) }
+  return {
+    command: hadCommand ? 'moved' : 'none',
+    ...(wasDefault ? { defaultCommand: 'moved' as const } : {}),
+    warnings,
+    staleVenvs: staleVirtualenvs(dirTo, dirFrom),
+  }
 }
 
 /** Directories not worth descending into: session data is large and holds no venvs, and
