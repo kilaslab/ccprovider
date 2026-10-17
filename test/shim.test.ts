@@ -33,6 +33,8 @@ beforeEach(() => {
     dirsRoot: join(home, '.local/share/ccprovider/dirs'),
     cacheDir: join(home, '.cache/ccprovider'),
     binDir: join(home, 'bin'),
+    defaultBinDir: join(home, 'default-bin'),
+    usageDir: join(home, 'usage'),
   }
   argsOut = join(home, 'args.out')
   fake = join(home, 'fake-ccprovider')
@@ -229,7 +231,7 @@ describe('installShim', () => {
     expect(() => installShim(paths, 'glm', [fake])).toThrow(ProfileError)
   })
 
-  test.each(['claude', 'ccprovider', 'CLAUDE', 'which', 'security', 'secret-tool', 'node', 'npx'])(
+  test.each(['claude', 'ccprovider', 'CLAUDE', 'security', 'secret-tool', 'node', 'npx'])(
     '%s is never installed as a command',
     (name) => {
       // Regression: these are the programs ccprovider itself looks up on PATH, so a launcher

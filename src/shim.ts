@@ -32,9 +32,12 @@ import { shellQuote } from './shell.js'
  *  PATH. A launcher with one of these names would be found first, run `ccprovider use`,
  *  which looks the program up again — and the launcher would call itself forever. */
 const RESERVED: Record<string, string> = {
-  claude: 'it would shadow Claude Code itself, and `ccprovider use` finds `claude` on PATH, so the launcher would call itself forever',
+  claude:
+    'it would shadow Claude Code itself, and `ccprovider use` finds `claude` on PATH, so the launcher would call itself forever. ' +
+    'To make a profile the plain `claude` command, run `ccprovider default <profile>`',
   ccprovider: 'it would shadow this tool',
-  which: '`ccprovider use` runs `which claude`, so the launcher would call itself forever',
+  python3: 'ccprovider runs it for the token status line, and a launcher by that name would be started with `-c` and run as Claude Code',
+  python: 'ccprovider runs it for the token status line, and a launcher by that name would be started with `-c` and run as Claude Code',
   security: 'ccprovider stores keys through the macOS `security` command',
   'secret-tool': 'ccprovider stores keys through the Linux `secret-tool` command',
   node: '`ccprovider doctor` probes the `node` on PATH',
@@ -43,7 +46,19 @@ const RESERVED: Record<string, string> = {
 
 const SHEBANG = '#!/bin/sh'
 const NODE_GUARD = '[ -x '
-const MARKER_RE = /^# ccprovider-shim profile=([a-z0-9][a-z0-9._-]{0,63}) /
+
+/** The two things this file writes. A launcher is `<binDir>/<profile>`; the default
+ *  wrapper is `<defaultBinDir>/claude` and runs whichever profile its marker names. The
+ *  markers differ so that neither can pass for the other, whatever directory it ends up in. */
+type ShimKind = 'launcher' | 'default'
+const MARKER_WORD: Record<ShimKind, string> = { launcher: 'ccprovider-shim', default: 'ccprovider-default' }
+const MARKER_RE: Record<ShimKind, RegExp> = {
+  launcher: /^# ccprovider-shim profile=([a-z0-9][a-z0-9._-]{0,63}) /,
+  default: /^# ccprovider-default profile=([a-z0-9][a-z0-9._-]{0,63}) /,
+}
+
+/** The command the default wrapper answers to. */
+const DEFAULT_COMMAND = 'claude'
 
 /** Longest file we will even read when deciding whether a file is one of ours. A real
  *  shim is ~200 bytes; anything bigger is somebody else's binary. */
@@ -66,7 +81,8 @@ export interface ShimInfo {
  *  live here and apply only at install time. */
 export function commandName(name: string): string {
   const cmd = validateName(name)
-  const why = RESERVED[cmd]
+  // Own keys only: `constructor` is a valid profile name, and RESERVED inherits one of that name.
+  const why = Object.hasOwn(RESERVED, cmd) ? RESERVED[cmd] : undefined
   if (why) throw new ProfileError(`"${cmd}" cannot be installed as a command: ${why}.`)
   return cmd
 }
@@ -107,7 +123,7 @@ export function preferredNode(launcher: string[], execPath = process.execPath): 
 
 /** Every value goes through `shellQuote`, so nothing in a path or name can be parsed
  *  as shell syntax. `"$@"` is the one intentionally live expansion. */
-export function renderShim(launcher: string[], name: string, node?: string): string {
+export function renderShim(launcher: string[], name: string, node?: string, kind: ShimKind = 'launcher'): string {
   if (!launcher.length) throw new ProfileError('Cannot write a launcher with nothing to run.')
   // The exec line is parsed back one line at a time. A path with a line break would
   // write a file this tool then cannot recognise as its own — unmanageable, not unsafe.
@@ -116,11 +132,13 @@ export function renderShim(launcher: string[], name: string, node?: string): str
   }
   // `--` is not optional: ccprovider's own parser would otherwise claim -m, -h and
   // -y from the user's arguments instead of handing them to claude.
-  const tail = `use ${shellQuote(name)} -- "$@"`
+  // The default wrapper says so: run from inside a session ccprovider started (a hook, a
+  // subagent's shell) it must not move that session to another provider. See `cmdUse`.
+  const tail = `use ${shellQuote(name)}${kind === 'default' ? ' --from-default' : ''} -- "$@"`
   const exec = `exec ${launcher.map(shellQuote).join(' ')} ${tail}`
   return [
     SHEBANG,
-    `# ccprovider-shim profile=${name} - managed by ccprovider, do not edit`,
+    `# ${MARKER_WORD[kind]} profile=${name} - managed by ccprovider, do not edit`,
     // When `node` is missing, `[ -x ]` fails, `&&` skips the exec and the next line runs.
     ...(node ? [`[ -x ${shellQuote(node)} ] && exec ${[node, ...launcher].map(shellQuote).join(' ')} ${tail}`] : []),
     exec,
@@ -133,7 +151,7 @@ export function renderShim(launcher: string[], name: string, node?: string): str
  *  This is the ownership test that gates every overwrite and delete. It is strict on
  *  purpose: a symlink is never ours (`~/.local/bin/claude` is one), and a file must be
  *  small, start with our shebang, and carry our marker on line 2. */
-function readShim(path: string): ShimInfo | null {
+function readShim(path: string, kind: ShimKind = 'launcher'): ShimInfo | null {
   let st
   try {
     st = lstatSync(path)
@@ -147,7 +165,7 @@ function readShim(path: string): ShimInfo | null {
 
   const [line1, line2, line3, line4] = text.split('\n')
   if (line1 !== SHEBANG) return null
-  const marker = MARKER_RE.exec(line2 ?? '')
+  const marker = MARKER_RE[kind].exec(line2 ?? '')
   if (!marker) return null
 
   // Launchers written before `preferredNode` existed have no guard line.
@@ -189,25 +207,42 @@ export function installShim(
   const cmd = commandName(name)
   const path = join(paths.binDir, cmd)
   const body = renderShim(launcher, cmd, node)
-  mkdirSync(paths.binDir, { recursive: true })
+  return writeShimFile(
+    paths.binDir,
+    cmd,
+    body,
+    (p) => readShim(p)?.profile === cmd,
+    () =>
+      new ProfileError(
+        `${path} already exists and was not created by ccprovider, so it was left alone. ` +
+          `Move it aside, or rename the profile (\`ccprovider rename ${cmd} <new name>\`), then run \`ccprovider install ${cmd}\`.`,
+      ),
+  )
+}
 
-  const foreign = () =>
-    new ProfileError(
-      `${path} already exists and was not created by ccprovider, so it was left alone. ` +
-        `Move it aside, or rename the profile (\`ccprovider rename ${cmd} <new name>\`), then run \`ccprovider install ${cmd}\`.`,
-    )
+/** Put `body` at `dir/file` without ever replacing a file `owned` does not vouch for.
+ *  The one place that writes into a PATH directory, for launchers and the default wrapper
+ *  alike, so the no-clobber guarantee below is stated once. */
+function writeShimFile(
+  dir: string,
+  file: string,
+  body: string,
+  owned: (path: string) => boolean,
+  foreign: () => ProfileError,
+): { path: string; action: InstallAction } {
+  const path = join(dir, file)
+  mkdirSync(dir, { recursive: true })
 
   // Unpredictable, and opened O_EXCL below: a predictable name written with the default
   // flags would follow a symlink someone planted there and overwrite whatever it points at.
-  const tmp = join(paths.binDir, `.${cmd}.ccprovider-${randomBytes(6).toString('hex')}.tmp`)
+  const tmp = join(dir, `.${file}.ccprovider-${randomBytes(6).toString('hex')}.tmp`)
   const stage = () => {
     writeFileSync(tmp, body, { flag: 'wx', mode: 0o755 })
     chmodSync(tmp, 0o755) // the umask may have trimmed the mode above
   }
   try {
     if (lstatSafe(path)) {
-      const ours = readShim(path)
-      if (!ours || ours.profile !== cmd) throw foreign()
+      if (!owned(path)) throw foreign()
       if (readText(path) === body) {
         chmodSync(path, 0o755)
         return { path, action: 'unchanged' }
@@ -367,8 +402,133 @@ export function inspectShim(paths: Paths, name: string, env: Record<string, stri
   return { ...base, state: 'ours', launcher: ours.launcher, targetOk: isExecutable(program!) && rest.every((p) => existsSync(p)) }
 }
 
+/**
+ * Make `profile` the plain `claude` command: write `<defaultBinDir>/claude`, which runs
+ * `ccprovider use <profile> --` exactly as a launcher would.
+ *
+ * It does not go in binDir, where a `claude` is Claude Code's own symlink that its updater
+ * rewrites. It takes effect when its directory comes before that one on PATH, and
+ * `ccprovider use` skips this directory when it looks claude up (see `findClaude`), which is
+ * what stops the wrapper from calling itself.
+ */
+export function installDefaultShim(
+  paths: Paths,
+  profile: string,
+  launcher: string[],
+  node = preferredNode(launcher),
+): { path: string; action: InstallAction } {
+  const name = validateName(profile)
+  const path = join(paths.defaultBinDir, DEFAULT_COMMAND)
+  const body = renderShim(launcher, name, node, 'default')
+  return writeShimFile(
+    paths.defaultBinDir,
+    DEFAULT_COMMAND,
+    body,
+    // Any default wrapper of ours, whichever profile it names: switching profiles rewrites it.
+    (p) => readShim(p, 'default') !== null,
+    () =>
+      new ProfileError(
+        `${path} already exists and was not created by ccprovider, so it was left alone. ` +
+          `Move it aside, then run \`ccprovider default ${name}\` again.`,
+      ),
+  )
+}
+
+export interface DefaultShimStatus {
+  path: string
+  /** `foreign`: something else occupies the name. */
+  state: 'absent' | 'foreign' | 'ours'
+  /** The profile the wrapper runs. */
+  profile?: string
+  launcher?: string[]
+  /** The wrapper's program exists and can be run. */
+  targetOk?: boolean
+  dirOnPath: boolean
+  /** What answers to `claude` instead of the wrapper: an earlier PATH entry, or, when its
+   *  directory is not on PATH at all, whatever `claude` there is. */
+  shadowedBy?: string
+}
+
+export function inspectDefaultShim(paths: Paths, env: Record<string, string | undefined> = process.env): DefaultShimStatus {
+  const path = join(paths.defaultBinDir, DEFAULT_COMMAND)
+  const base = {
+    path,
+    dirOnPath: binDirOnPath(paths.defaultBinDir, env.PATH),
+    shadowedBy: findShadow(DEFAULT_COMMAND, paths.defaultBinDir, env.PATH),
+  }
+  if (!lstatSafe(path)) return { ...base, state: 'absent' }
+  const ours = readShim(path, 'default')
+  if (!ours) return { ...base, state: 'foreign' }
+  const [program, ...rest] = ours.launcher
+  return {
+    ...base,
+    state: 'ours',
+    profile: ours.profile,
+    launcher: ours.launcher,
+    targetOk: isExecutable(program!) && rest.every((p) => existsSync(p)),
+  }
+}
+
+/** Delete the default wrapper if — and only if — ccprovider wrote it. Given a profile,
+ *  only when it runs that profile: `elsewhere` means it is ours but names another one. */
+export function removeDefaultShim(paths: Paths, profile?: string): RemoveResult | 'elsewhere' {
+  const path = join(paths.defaultBinDir, DEFAULT_COMMAND)
+  if (!lstatSafe(path)) return 'absent'
+  const ours = readShim(path, 'default')
+  if (!ours) return 'foreign'
+  if (profile !== undefined && ours.profile !== validateName(profile)) return 'elsewhere'
+  unlinkSync(path)
+  return 'removed'
+}
+
+/** The default wrapper as it is on disk: the profile, the launcher and the node it runs. */
+export function readDefaultShimInfo(paths: Paths): ShimInfo | null {
+  return readShim(join(paths.defaultBinDir, DEFAULT_COMMAND), 'default')
+}
+
+/** Which profile the default wrapper runs, read from the file alone. Cheap, unlike
+ *  `inspectDefaultShim`, which also walks PATH. */
+export function currentDefaultProfile(paths: Paths): string | undefined {
+  return readShim(join(paths.defaultBinDir, DEFAULT_COMMAND), 'default')?.profile
+}
+
+/** Is this file a launcher that ccprovider wrote for a profile. */
+export function isLauncher(path: string): boolean {
+  return readShim(normalise(path), 'launcher') !== null
+}
+
+/** The first executable called `cmd` on PATH, leaving out `skipDirs`. Directories are
+ *  compared by where they really are, so `~/x/../x` and a symlink to `~/x` are skipped too. */
+export function findOnPath(
+  cmd: string,
+  pathVar: string | undefined,
+  skipDirs: string[] = [],
+  /** Leaves out a candidate it returns true for, wherever it sits. */
+  skip?: (candidate: string) => boolean,
+): string | undefined {
+  const skipped = skipDirs.map(normalise)
+  for (const dir of pathEntries(pathVar)) {
+    // Each directory is resolved once, and only when there is something to compare it with.
+    if (skipped.length && skipped.includes(normalise(dir))) continue
+    const candidate = join(dir, cmd)
+    if (isExecutable(candidate) && !skip?.(candidate)) return candidate
+  }
+  return undefined
+}
+
+/** Is this file a default wrapper that ccprovider wrote. Judged by what it is, not by which
+ *  directory it is in: the wrapper can be left behind where it was made while the settings
+ *  that say where wrappers go have since changed. */
+export function isDefaultWrapper(path: string): boolean {
+  // Through the link: `readShim` refuses a symlink on purpose, because it decides what
+  // ccprovider may overwrite. Recognising a file is a different question, and a link to the
+  // wrapper is the wrapper.
+  return readShim(normalise(path), 'default') !== null
+}
+
 export function binDirOnPath(binDir: string, pathVar: string | undefined): boolean {
-  return pathEntries(pathVar).some((d) => samePath(d, binDir))
+  const target = normalise(binDir)
+  return pathEntries(pathVar).some((d) => normalise(d) === target)
 }
 
 /** The first PATH entry *before* binDir that holds an executable called `cmd`.
@@ -376,8 +536,9 @@ export function binDirOnPath(binDir: string, pathVar: string | undefined): boole
  *  If binDir is not on PATH at all, whatever answers to `cmd` today is what the user
  *  will actually get, so that is reported too. */
 export function findShadow(cmd: string, binDir: string, pathVar: string | undefined): string | undefined {
+  const target = normalise(binDir)
   for (const dir of pathEntries(pathVar)) {
-    if (samePath(dir, binDir)) return undefined
+    if (normalise(dir) === target) return undefined
     const candidate = join(dir, cmd)
     if (isExecutable(candidate)) return candidate
   }
@@ -387,30 +548,23 @@ export function findShadow(cmd: string, binDir: string, pathVar: string | undefi
 /** An executable called `cmd` in any PATH directory other than binDir — i.e. a real
  *  program that a launcher of that name would replace for anyone who has binDir first. */
 export function findOtherProgram(cmd: string, binDir: string, pathVar: string | undefined): string | undefined {
-  for (const dir of pathEntries(pathVar)) {
-    if (samePath(dir, binDir)) continue
-    const candidate = join(dir, cmd)
-    if (isExecutable(candidate)) return candidate
-  }
-  return undefined
+  return findOnPath(cmd, pathVar, [binDir])
 }
 
 function pathEntries(pathVar: string | undefined): string[] {
   return (pathVar ?? '').split(delimiter).filter(Boolean)
 }
 
-function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => {
-    try {
-      return realpathSync(p)
-    } catch {
-      return resolve(p)
-    }
+/** Where a path really is, or where it would be if it existed. */
+function normalise(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return resolve(p)
   }
-  return norm(a) === norm(b)
 }
 
-function isExecutable(p: string): boolean {
+export function isExecutable(p: string): boolean {
   try {
     if (!statSync(p).isFile()) return false
     accessSync(p, constants.X_OK)

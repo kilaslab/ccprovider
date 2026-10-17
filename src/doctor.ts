@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Paths } from './paths.js'
 import { profileDir } from './paths.js'
+import { relative, sep } from 'node:path'
 import type { Profile, AliasSlot } from './types.js'
 import { listInstalled, readExplore } from './agents.js'
 import { inspectLinks, LINKED_ENTRIES } from './configdir.js'
@@ -11,7 +12,8 @@ import { compareInstalled, HELPER_KEY_RE, readInstalledMcp, registeredIds, resol
 import { findPreset } from './presets.js'
 import { probeEndpoint, probeModel } from './probe.js'
 import type { SecretStore } from './secrets/index.js'
-import { inspectShim, listShims } from './shim.js'
+import { inspectDefaultShim, inspectShim, listShims } from './shim.js'
+import { compareVersions, inspectStatusline, STATUSLINE_SOURCE } from './statusline.js'
 
 export type Status = 'ok' | 'warn' | 'fail'
 export interface Check {
@@ -47,7 +49,7 @@ export async function runDoctor(
 
   // --- claude binary
   try {
-    checks.push({ label: 'claude on PATH', status: 'ok', detail: findClaude(process.env as Record<string, string>) })
+    checks.push({ label: 'claude on PATH', status: 'ok', detail: findClaude(process.env, [paths.defaultBinDir]) })
   } catch (e) {
     checks.push({ label: 'claude on PATH', status: 'fail', detail: (e as Error).message })
   }
@@ -323,6 +325,77 @@ function probeRuntime(): Runtime {
   }
   runtimeMemo = { node: run('node', ['-p', 'process.versions.node']), npx: run('npx', ['--version']) !== null }
   return runtimeMemo
+}
+
+/** The plain `claude` command, once a profile has been made its default. About the
+ *  install and not any one profile, so it is reported once. Says nothing when there is no
+ *  default: that is the ordinary state, not a finding. */
+export function defaultChecks(paths: Paths, knownProfiles: string[], env: Record<string, string | undefined>): Check[] {
+  const label = 'default command `claude`'
+  const s = inspectDefaultShim(paths, env)
+  if (s.state === 'absent') return []
+  if (s.state === 'foreign') {
+    return [{ label, status: 'warn', detail: `${s.path} is not a ccprovider wrapper, so \`ccprovider default\` leaves it alone` }]
+  }
+  if (!knownProfiles.includes(s.profile!)) {
+    return [{
+      label,
+      status: 'fail',
+      detail: `runs profile "${s.profile}", which no longer exists, so \`claude\` fails — \`ccprovider default --off\` removes it, \`ccprovider default <profile>\` picks another`,
+    }]
+  }
+  if (!s.targetOk) {
+    return [{
+      label,
+      status: 'fail',
+      detail: `points at ${s.launcher!.join(' ')}, which is missing or not executable — re-run \`ccprovider default ${s.profile}\``,
+    }]
+  }
+  if (!s.dirOnPath) {
+    return [{
+      label,
+      status: 'warn',
+      detail: `installed, but ${paths.defaultBinDir} is not on PATH, so \`claude\` runs ${s.shadowedBy ?? 'nothing'} — put it before that on your PATH`,
+    }]
+  }
+  if (s.shadowedBy) {
+    return [{ label, status: 'warn', detail: `installed, but \`claude\` resolves to ${s.shadowedBy} first` }]
+  }
+  return [{ label, status: 'ok', detail: `runs "${s.profile}"` }]
+}
+
+/** The token footer, once installed. Install-wide, since every profile reads the same
+ *  settings.json. Says nothing when it was never installed or the status line is someone
+ *  else's: those are choices, not findings. */
+export function statuslineChecks(paths: Paths, shipped: string = STATUSLINE_SOURCE.version): Check[] {
+  const label = 'token footer'
+  const s = inspectStatusline(paths.claudeDir, process.env, paths.dirsRoot)
+  if (s.state !== 'ours') return []
+  if (!s.working) {
+    // A status line command that fails shows nothing at all, other badges included.
+    return [{
+      label,
+      status: 'fail',
+      detail: `the script or interpreter it runs is missing, which hides the whole status bar — run \`ccprovider statusline add\` to repair it`,
+    }]
+  }
+  if (s.misplaced) {
+    const owner = relative(paths.dirsRoot, s.misplaced).split(sep)[0]
+    return [{
+      label,
+      status: 'warn',
+      detail: `runs from the "${owner}" profile's directory (${s.misplaced}), so removing that profile hides the status bar in every profile — \`ccprovider statusline add\` moves it into ${join(paths.claudeDir, 'hooks')}`,
+    }]
+  }
+  // The user's own script runs the badge: upstream stamps no version for that, and what it
+  // runs is theirs to keep up to date.
+  if (s.combined) return [{ label, status: 'ok', detail: 'run by your own status line script' }]
+  if (s.version === undefined || compareVersions(s.version, shipped) < 0) {
+    return [{ label, status: 'warn', detail: `installed ${s.version ? `v${s.version}` : 'from an unknown version'}, ccprovider ships v${shipped} — \`ccprovider statusline add\` updates it` }]
+  }
+  // Newer is fine: the Claude plugin's own hook can install one, and `add` leaves it be.
+  const newer = compareVersions(s.version, shipped) > 0 ? `, newer than the v${shipped} ccprovider ships` : ''
+  return [{ label, status: 'ok', detail: `v${s.version}${newer}, shown in every profile` }]
 }
 
 /** Launchers whose profile has been deleted — reported once, not per profile. */

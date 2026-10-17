@@ -1,8 +1,10 @@
+import { rmSync } from 'node:fs'
 import { removeProfileDir } from './configdir.js'
 import { profileDir, type Paths } from './paths.js'
 import { getProfile, saveStore } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
-import { removeShim } from './shim.js'
+import { removeDefaultShim, removeShim } from './shim.js'
+import { ledgerFiles } from './usage.js'
 import type { ProfileStore } from './types.js'
 
 export interface RemoveDeps {
@@ -14,6 +16,8 @@ export interface RemoveDeps {
 export interface RemoveResult {
   /** What happened to a launcher of the same name: only one ccprovider wrote is removed. */
   command: 'removed' | 'absent' | 'foreign' | 'failed'
+  /** Set when the plain `claude` command ran this profile and went with it. */
+  defaultCommand?: 'removed'
   /** Leftovers after the profile itself is gone. Never fatal. */
   warnings: string[]
 }
@@ -27,7 +31,7 @@ export interface RemoveResult {
  * after that — a denied Keychain prompt — is reported rather than leaving a profile in
  * the config with no directory.
  */
-export async function removeProfile(deps: RemoveDeps, name: string): Promise<RemoveResult> {
+export async function removeProfile(deps: RemoveDeps, name: string, opts: { keepDefault?: boolean } = {}): Promise<RemoveResult> {
   const { paths, secrets, store } = deps
   getProfile(store, name)
   const warnings: string[] = []
@@ -50,5 +54,22 @@ export async function removeProfile(deps: RemoveDeps, name: string): Promise<Rem
     command = 'failed'
     warnings.push(`Could not remove the \`${name}\` command: ${(e as Error).message}`)
   }
-  return { command, warnings }
+
+  // Its record of use goes with it: kept, it would be added to a later profile of this name.
+  try {
+    for (const file of ledgerFiles(paths, name)) rmSync(file, { force: true })
+  } catch (e) {
+    warnings.push(`Could not remove the usage record for "${name}": ${(e as Error).message}`)
+  }
+
+  // `claude` would otherwise keep launching a profile that no longer exists.
+  let defaultCommand: RemoveResult['defaultCommand']
+  try {
+    // Not when `add` is replacing the profile: one of the same name is created straight away,
+    // and `claude` would otherwise fall back to stock Claude Code without a word.
+    if (!opts.keepDefault && removeDefaultShim(paths, name) === 'removed') defaultCommand = 'removed'
+  } catch (e) {
+    warnings.push(`Could not remove the default \`claude\` command: ${(e as Error).message}`)
+  }
+  return { command, ...(defaultCommand ? { defaultCommand } : {}), warnings }
 }

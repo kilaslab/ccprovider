@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { orphanChecks, runDoctor, type Check, type Runtime } from '../src/doctor.js'
+import { defaultChecks, orphanChecks, runDoctor, statuslineChecks, type Check, type Runtime } from '../src/doctor.js'
 import { setExplore } from '../src/agents.js'
 import { serverJson } from '../src/mcp.js'
 import { findPreset } from '../src/presets.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import { MemoryStore } from '../src/secrets/index.js'
-import { installShim } from '../src/shim.js'
+import { installDefaultShim, installShim } from '../src/shim.js'
 import type { Profile } from '../src/types.js'
 
 const glm = findPreset('glm')!
@@ -37,6 +37,8 @@ beforeEach(() => {
     dirsRoot: join(home, 'dirs'),
     cacheDir: join(home, 'cache'),
     binDir: join(home, 'bin'),
+    defaultBinDir: join(home, 'default-bin'),
+    usageDir: join(home, 'usage'),
   }
   dir = profileDir(paths, 'glm')
   mkdirSync(dir, { recursive: true })
@@ -317,5 +319,141 @@ describe('orphanChecks', () => {
   test('none when every launcher has its profile', () => {
     installShim(paths, 'glm', [fake])
     expect(orphanChecks(paths, ['glm'])).toEqual([])
+  })
+})
+
+describe('defaultChecks', () => {
+  const real = () => {
+    mkdirSync(join(home, 'real'), { recursive: true })
+    writeFileSync(join(home, 'real', 'claude'), '#!/bin/sh\n', { mode: 0o755 })
+    return join(home, 'real', 'claude')
+  }
+  const label = 'default command `claude`'
+  const first = () => ({ PATH: `${paths.defaultBinDir}:${join(home, 'real')}` })
+
+  test('says nothing when no profile has been made the default', () => {
+    expect(defaultChecks(paths, ['glm'], first())).toEqual([])
+  })
+
+  test('ok: it runs a profile that exists, and it is the claude a shell finds', () => {
+    real()
+    installDefaultShim(paths, 'glm', [fake])
+    const [c] = defaultChecks(paths, ['glm'], first())
+    expect(c).toEqual({ label, status: 'ok', detail: 'runs "glm"' })
+  })
+
+  test('fails when its profile is gone, because every `claude` would then error', () => {
+    real()
+    installDefaultShim(paths, 'old', [fake])
+    const [c] = defaultChecks(paths, ['glm'], first())
+    expect(c!.status).toBe('fail')
+    expect(c!.detail).toContain('"old"')
+    expect(c!.detail).toContain('ccprovider default --off')
+  })
+
+  test('fails when the program it execs is gone, as after a Node version change', () => {
+    real()
+    installDefaultShim(paths, 'glm', [join(home, 'gone')])
+    const [c] = defaultChecks(paths, ['glm'], first())
+    expect(c!.status).toBe('fail')
+    expect(c!.detail).toContain('ccprovider default glm')
+  })
+
+  test('warns when its directory is not on PATH, naming the claude that runs instead', () => {
+    const r = real()
+    installDefaultShim(paths, 'glm', [fake])
+    const [c] = defaultChecks(paths, ['glm'], { PATH: join(home, 'real') })
+    expect(c!.status).toBe('warn')
+    expect(c!.detail).toContain(paths.defaultBinDir)
+    expect(c!.detail).toContain(r)
+  })
+
+  test('warns when another claude comes before it on PATH', () => {
+    const r = real()
+    installDefaultShim(paths, 'glm', [fake])
+    const [c] = defaultChecks(paths, ['glm'], { PATH: `${join(home, 'real')}:${paths.defaultBinDir}` })
+    expect(c!.status).toBe('warn')
+    expect(c!.detail).toContain(`resolves to ${r} first`)
+  })
+
+  test('warns about a claude there that ccprovider did not write', () => {
+    mkdirSync(paths.defaultBinDir, { recursive: true })
+    writeFileSync(join(paths.defaultBinDir, 'claude'), '#!/bin/sh\n', { mode: 0o755 })
+    const [c] = defaultChecks(paths, ['glm'], first())
+    expect(c!.status).toBe('warn')
+    expect(c!.detail).toContain('not a ccprovider wrapper')
+  })
+})
+
+describe('statuslineChecks', () => {
+  const settings = (command: string) => {
+    mkdirSync(paths.claudeDir, { recursive: true })
+    writeFileSync(join(paths.claudeDir, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command } }))
+  }
+  const hooks = (name: string, body = '#') => {
+    mkdirSync(join(paths.claudeDir, 'hooks'), { recursive: true })
+    writeFileSync(join(paths.claudeDir, 'hooks', name), body)
+  }
+  const label = 'token footer'
+
+  // No stamp is written when the user's own script calls the badge, so there is no version to
+  // compare, and nothing to be warned about.
+  test('a status line script that calls the badge is ok, without a version to compare', () => {
+    const combiner = join(home, 'combine.sh')
+    writeFileSync(combiner, '#!/bin/sh\npython3 tokens_statusline.py\n', { mode: 0o755 })
+    settings(combiner)
+    expect(statuslineChecks(paths, '0.4.5')).toEqual([{ label, status: 'ok', detail: 'run by your own status line script' }])
+  })
+
+  test('says nothing when the footer was never installed, or is somebody else\'s', () => {
+    expect(statuslineChecks(paths)).toEqual([])
+    settings('ccusage statusline')
+    expect(statuslineChecks(paths)).toEqual([])
+  })
+
+  test('ok, with its version, when the script and interpreter are there', () => {
+    hooks('tokens_statusline.py')
+    hooks('cc-token-statusline-installed.json', '{"version":"0.4.5"}')
+    settings(`"/bin/sh" "${join(paths.claudeDir, 'hooks', 'tokens_statusline.py')}"`)
+    expect(statuslineChecks(paths, '0.4.5')).toEqual([{ label, status: 'ok', detail: 'v0.4.5, shown in every profile' }])
+  })
+
+  // The whole status bar goes, not just this badge, when its command fails.
+  test('fails when the script is gone, because that hides the entire status bar', () => {
+    settings(`"/bin/sh" "${join(paths.claudeDir, 'hooks', 'tokens_statusline.py')}"`)
+    const [c] = statuslineChecks(paths, '0.4.5')
+    expect(c!.status).toBe('fail')
+    expect(c!.detail).toContain('ccprovider statusline add')
+  })
+
+  test('warns when the script lives in a profile\'s directory, which removing the profile would take away', () => {
+    const profileHooks = join(paths.dirsRoot, 'pclaude', 'hooks')
+    mkdirSync(profileHooks, { recursive: true })
+    writeFileSync(join(profileHooks, 'tokens_statusline.py'), '#')
+    writeFileSync(join(profileHooks, 'cc-token-statusline-installed.json'), '{"version":"0.4.5"}')
+    settings(`"/bin/sh" "${join(profileHooks, 'tokens_statusline.py')}"`)
+    const [c] = statuslineChecks(paths, '0.4.5')
+    expect(c!.status).toBe('warn')
+    expect(c!.detail).toContain('pclaude')
+    expect(c!.detail).toContain('ccprovider statusline add')
+  })
+
+  test('is fine with a newer version than the one ccprovider ships', () => {
+    hooks('tokens_statusline.py')
+    hooks('cc-token-statusline-installed.json', '{"version":"0.5.0"}')
+    settings(`"/bin/sh" "${join(paths.claudeDir, 'hooks', 'tokens_statusline.py')}"`)
+    const [c] = statuslineChecks(paths, '0.4.5')
+    expect(c!.status).toBe('ok')
+    expect(c!.detail).toContain('0.5.0')
+  })
+
+  test('warns when the installed copy is older than the one ccprovider ships', () => {
+    hooks('tokens_statusline.py')
+    hooks('cc-token-statusline-installed.json', '{"version":"0.3.0"}')
+    settings(`"/bin/sh" "${join(paths.claudeDir, 'hooks', 'tokens_statusline.py')}"`)
+    const [c] = statuslineChecks(paths, '0.4.5')
+    expect(c!.status).toBe('warn')
+    expect(c!.detail).toContain('0.3.0')
+    expect(c!.detail).toContain('0.4.5')
   })
 })

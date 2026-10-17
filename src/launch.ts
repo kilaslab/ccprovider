@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
 import type { Profile, AliasSlot } from './types.js'
+import { findOnPath, isDefaultWrapper } from './shim.js'
 import { TIERS, REQUIRED_SLOTS, OPUSPLAN } from './types.js'
 
 /** Env var Claude Code reads for each alias slot. */
@@ -50,6 +50,22 @@ export const STRIPPED_VARS = [
   'CLAUDE_CODE_EXECPATH',
   'CLAUDE_PID',
   'CLAUDE_EFFORT',
+] as const
+
+/** The credentials and routing flags among STRIPPED_VARS: what, left in the environment, hands
+ *  someone's credential or request to the wrong place. Measured against a fake provider: an
+ *  inherited ANTHROPIC_API_KEY and ANTHROPIC_CUSTOM_HEADERS were both sent to it, and
+ *  CLAUDE_CODE_USE_BEDROCK kept any request from reaching it at all. Emptied, none of that
+ *  happened and routing was normal. `use` deletes them; `ccprovider env` neutralises them for
+ *  the shell, file or SDK that cannot. */
+export const CREDENTIAL_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'ANTHROPIC_VERTEX_BASE_URL',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
 ] as const
 
 /**
@@ -209,24 +225,24 @@ export function redact(secret: string): string {
   return `${secret.slice(0, 4)}…${secret.slice(-4)}`
 }
 
+/** What the default wrapper says when it passes a `claude` through instead of moving it to the
+ *  default profile, because it was run inside a session ccprovider started. Said to a person at
+ *  a terminal, who may not expect it (a tmux begun from a session), and not to a hook or a
+ *  subagent, whose stderr is better left clean. */
+export function passThroughNotice(tty: boolean): string | null {
+  return tty
+    ? 'ccprovider: this is inside a ccprovider session, so `claude` runs on that session\'s provider, not the default profile. ' +
+        'Open a terminal that was not started from a session for the default (`ccprovider default` shows it, `ccprovider default --off` removes it).'
+    : null
+}
+
 /** Resolve the `claude` binary from PATH.
  *
- *  Note this takes PATH's first match as-is. If a user has their own wrapper named
- *  `claude` that shells out to ccprovider, that recurses — detecting it reliably would
- *  mean inspecting the target, which is not worth the complexity for a self-inflicted
- *  setup. `doctor` prints the resolved path so it is visible. */
-export function findClaude(env: Record<string, string>): string {
-  try {
-    const out = execFileSync('which', ['claude'], {
-      encoding: 'utf8',
-      env,
-    })
-    const path = out.trim().split('\n')[0]
-    if (!path) throw new Error('empty')
-    return path
-  } catch {
-    throw new LaunchError(
-      'Could not find `claude` on your PATH. Install Claude Code first: https://claude.com/code',
-    )
-  }
+ *  `skipDirs` is where a wrapper called `claude` may sit, namely the directory
+ *  `ccprovider default` writes into. That wrapper runs `ccprovider use`, which comes here,
+ *  so taking PATH's first match would find the wrapper again and run it forever. */
+export function findClaude(env: Record<string, string | undefined>, skipDirs: string[] = []): string {
+  const found = findOnPath('claude', env.PATH, skipDirs, isDefaultWrapper)
+  if (!found) throw new LaunchError('Could not find `claude` on your PATH. Install Claude Code first: https://claude.com/code')
+  return found
 }

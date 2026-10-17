@@ -83,6 +83,8 @@ describe('oauth profile doctor', () => {
       dirsRoot: join(home, 'dirs'),
       cacheDir: join(home, 'cache'),
       binDir: join(home, 'bin'),
+      defaultBinDir: join(home, 'default-bin'),
+      usageDir: join(home, 'usage'),
     }
   })
   afterEach(() => rmSync(home, { recursive: true, force: true }))

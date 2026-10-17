@@ -3,8 +3,10 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renameProfile, staleVirtualenvs } from '../src/rename.js'
+import { emptyLedger, ledgerPath, loadLedger, saveLedger } from '../src/usage.js'
+import { copyFileSync } from 'node:fs'
 import { loadStore, saveStore } from '../src/profile.js'
-import { installShim, inspectShim } from '../src/shim.js'
+import { inspectDefaultShim, installDefaultShim, installShim, inspectShim } from '../src/shim.js'
 import { MemoryStore, type SecretStore } from '../src/secrets/index.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import type { Profile, ProfileStore } from '../src/types.js'
@@ -28,6 +30,8 @@ beforeEach(async () => {
     dirsRoot: join(home, '.local/share/ccprovider/dirs'),
     cacheDir: join(home, '.cache/ccprovider'),
     binDir: join(home, 'bin'),
+    defaultBinDir: join(home, 'default-bin'),
+    usageDir: join(home, 'usage'),
   }
   secrets = new MemoryStore()
   await secrets.set('zclaude', 'sk-secret')
@@ -106,6 +110,116 @@ describe('renameProfile', () => {
   test('is case-insensitive about the new name, like every other entry point', async () => {
     await renameProfile(deps(), 'ZClaude', 'GLM')
     expect(Object.keys(loadStore(paths).providers)).toContain('glm')
+  })
+})
+
+describe('the default `claude` wrapper', () => {
+  const runs = () => inspectDefaultShim(paths, { PATH: '' }).profile
+
+  test('follows the profile it runs to its new name', async () => {
+    installDefaultShim(paths, 'zclaude', launcher)
+    const r = await renameProfile(deps(), 'zclaude', 'glm')
+    expect(r.defaultCommand).toBe('moved')
+    expect(runs()).toBe('glm')
+  })
+
+  test('is left alone when it runs another profile, and when there is none', async () => {
+    installDefaultShim(paths, 'other', launcher)
+    const r = await renameProfile(deps(), 'zclaude', 'glm')
+    expect(r.defaultCommand).toBeUndefined()
+    expect(runs()).toBe('other')
+  })
+
+  test('is left alone when the claude there is not ours', async () => {
+    mkdirSync(paths.defaultBinDir, { recursive: true })
+    writeFileSync(join(paths.defaultBinDir, 'claude'), '#!/bin/sh\necho mine\n', { mode: 0o755 })
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect(readFileSync(join(paths.defaultBinDir, 'claude'), 'utf8')).toBe('#!/bin/sh\necho mine\n')
+  })
+
+  // The wrapper changes before the commit point, so a failure there must put it back:
+  // otherwise `claude` would run a profile that the config still calls something else.
+  // Undoing must put the wrapper back as it was, not rewrite it for whatever ccprovider ran the rename.
+  test('goes back with the launcher it had, not the one that ran the failed rename', async () => {
+    installDefaultShim(paths, 'zclaude', ['/older/nvm/ccprovider'])
+    await expect(renameProfile(deps({ save: () => { throw new Error('disk full') } }), 'zclaude', 'glm')).rejects.toThrow(/disk full/)
+    expect(inspectDefaultShim(paths, { PATH: '' }).launcher).toEqual(['/older/nvm/ccprovider'])
+  })
+
+  test('goes back to the old name when the rename fails at the commit point', async () => {
+    installDefaultShim(paths, 'zclaude', launcher)
+    await expect(renameProfile(deps({ save: () => { throw new Error('disk full') } }), 'zclaude', 'glm')).rejects.toThrow(/disk full/)
+    expect(runs()).toBe('zclaude')
+    await expectUntouched()
+  })
+})
+
+describe('the usage ledger', () => {
+  const ledgerWith = () => {
+    const l = emptyLedger()
+    l.calls.msg_1 = ['glm-5.3', 1_700_000_000, 10, 5, null, null]
+    return l
+  }
+
+  test('moves with the profile, so its history of use is not orphaned', async () => {
+    saveLedger(ledgerPath(paths, 'zclaude'), ledgerWith())
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect(existsSync(ledgerPath(paths, 'zclaude'))).toBe(false)
+    expect(loadLedger(ledgerPath(paths, 'glm'))?.calls.msg_1).toBeDefined()
+  })
+
+  test('takes the copy a --rebuild left behind along with it', async () => {
+    saveLedger(ledgerPath(paths, 'zclaude'), ledgerWith())
+    copyFileSync(ledgerPath(paths, 'zclaude'), `${ledgerPath(paths, 'zclaude')}.bak`)
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect(existsSync(`${ledgerPath(paths, 'zclaude')}.bak`)).toBe(false)
+    expect(existsSync(`${ledgerPath(paths, 'glm')}.bak`)).toBe(true)
+  })
+
+  // Usage already filed under the new name is either a deleted profile's, which this one must
+  // not inherit, or what an interrupted rename of this very profile left. Nothing tells the two
+  // apart, so neither is guessed: the rename stops and says how to resolve it, as it does for
+  // the profile directory.
+  test('stops, saying why, when anything is already filed under the new name', async () => {
+    mkdirSync(paths.usageDir, { recursive: true })
+    for (const leftover of ['', '.bak', '.damaged']) {
+      writeFileSync(`${ledgerPath(paths, 'glm')}${leftover}`, 'old')
+      await expect(renameProfile(deps(), 'zclaude', 'glm')).rejects.toThrow(/interrupted|left over/)
+      await expectUntouched()
+      rmSync(`${ledgerPath(paths, 'glm')}${leftover}`)
+    }
+  })
+
+  test('also when the profile being renamed has no usage of its own', async () => {
+    mkdirSync(paths.usageDir, { recursive: true })
+    writeFileSync(ledgerPath(paths, 'glm'), 'old')
+    await expect(renameProfile(deps(), 'zclaude', 'glm')).rejects.toThrow(/glm\.json/)
+  })
+
+  test('a profile that never had one renames without inventing it', async () => {
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect(existsSync(ledgerPath(paths, 'glm'))).toBe(false)
+  })
+
+  test('goes back to the old name when the rename fails at the commit point', async () => {
+    saveLedger(ledgerPath(paths, 'zclaude'), ledgerWith())
+    await expect(renameProfile(deps({ save: () => { throw new Error('disk full') } }), 'zclaude', 'glm')).rejects.toThrow(/disk full/)
+    expect(loadLedger(ledgerPath(paths, 'zclaude'))?.calls.msg_1).toBeDefined()
+    expect(existsSync(ledgerPath(paths, 'glm'))).toBe(false)
+  })
+
+  test('refuses before moving anything when the new name already has one', async () => {
+    saveLedger(ledgerPath(paths, 'zclaude'), ledgerWith())
+    saveLedger(ledgerPath(paths, 'glm'), emptyLedger())
+    await expect(renameProfile(deps(), 'zclaude', 'glm')).rejects.toThrow(/usage/)
+    await expectUntouched()
+  })
+})
+
+describe('a new name every object already has', () => {
+  test('is not "already taken"', async () => {
+    await renameProfile(deps(), 'zclaude', 'constructor')
+    expect(Object.keys(loadStore(paths).providers)).toEqual(['constructor', 'other'])
   })
 })
 

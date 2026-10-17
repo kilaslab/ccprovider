@@ -6,6 +6,131 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+### Added
+
+- **`ccprovider env <name> --format dotenv|json`**, for running a profile somewhere that is
+  not your shell: `docker run --env-file <(ccprovider env glm --format dotenv)`, or the
+  `env` option of the Claude Agent SDK. Both leave out `CLAUDE_CONFIG_DIR` (a path on this
+  machine) and carry the credential and routing variables empty (see Changed below for why).
+  The default is still the `export` listing.
+- `docs/agent-sdk.md`: working TypeScript, Python and Docker examples, and what the SDK
+  loads from `~/.claude` by default.
+- **`ccprovider default <profile>`** makes a profile the plain `claude` command, for a
+  machine that only uses one provider; `--off` puts the real one back. It writes a script
+  into `~/.local/share/ccprovider/bin/` that you put before Claude Code's directory on
+  `PATH`, and leaves `~/.local/bin/claude` (which its updater rewrites) and
+  `~/.claude/settings.json` (which every profile shares) alone. `rename` and `rm` keep it
+  in step with its profile, and `doctor` reports it. See `docs/default-command.md`.
+
+- **`ccprovider usage [name]`** shows the tokens each profile used, per model: input,
+  output, cache read, cache write and the cache hit rate (`--since 7d`, `--by day`,
+  `--json`, `--rebuild`, which keeps the ledger it replaces as `.bak`). It reads the
+  transcripts Claude Code keeps in each profile,
+  grouping the several snapshot lines of one call by message id and keeping the largest
+  figures, counting subagents, and treating a cache a provider does not report as unknown
+  and not as zero. A ledger remembers how far it has read: a 3.3 GB profile took about 8
+  seconds the first time and 0.1 s after. The ledger keeps what it counted after Claude
+  Code deletes old transcripts, and follows a profile through `rename` and `rm`. See
+  `docs/usage.md`.
+
+- **`ccprovider statusline [add|rm]`** and an offer on `ccprovider add` (default Yes, asked
+  once; `--no-statusline` skips it) for the token badge in Claude Code's footer. It is
+  cc-token-statusline by Alfafis (MIT), pinned to one upstream commit with a sha256 per file
+  and installed by upstream's own installer, which backs up `settings.json` and wraps a status
+  line you already have. It goes into the real config directory, not the profile it is run
+  from, so one install covers every profile. `doctor` reports it; a footer whose script is gone
+  is a failure, since a failing status line command hides the whole bar. Needs a python that
+  actually runs (the macOS stub is skipped, with the remedy named), and `rm` counts as a no
+  so `add` does not offer it again. See `docs/statusline.md`, which also records what the badge gets right and wrong off Anthropic's
+  models: context is correct, but its optional token totals read two to three times too high
+  on GLM and its quota segment is empty, so only the correct defaults are used.
+
+- `ccprovider env` (the default `sh` format too) now neutralises the seven credential and routing
+  variables `use` deletes from a launch (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `ANTHROPIC_CUSTOM_HEADERS`, the Bedrock and Vertex base URLs and `CLAUDE_CODE_USE_BEDROCK`/
+  `_VERTEX`): `unset` in the shell form, an empty value in `dotenv` and `json`, which cannot
+  unset. Measured against a fake provider, left in place an Anthropic `x-api-key` and a custom
+  header both reached it, and the Bedrock flag kept any request from reaching it; emptied,
+  neither happened and routing was normal. So `eval "$(ccprovider env glm)"`, an `--env-file`
+  and an SDK `env` no longer carry them to the provider.
+- `ccprovider env --format dotenv` names, on stderr and never with the value, any variable
+  whose value Compose's `env_file` or python-dotenv would alter; `docker run --env-file`
+  reads them as they are.
+
+### Fixed
+
+- A profile named `constructor` (or anything else a plain object inherits) was treated as
+  already existing by `getProfile`, as colliding by the store check, and as reserved by the
+  command-name check; all three now look at own keys only.
+- `ccprovider statusline add` no longer fails when your status line already runs the badge (a
+  script that calls it among other things): upstream refreshes the badge's copy and leaves
+  `statusLine` alone, which is now reported as done.
+- `ccprovider use` also skips a symlink to the default wrapper, not just the file.
+- Replacing a profile with `ccprovider add` no longer drops the default `claude` wrapper that named
+  it, which silently put plain `claude` back to stock Claude Code.
+- `usage` remembers the position in transcripts that held no countable call (they were read from
+  the first byte on every run), and forgets the position of one that was emptied (it was resumed in
+  the middle once it grew back).
+- `ccprovider use` skips the default wrapper by what the file is, not only by its directory, so
+  a wrapper left where `default` made it after `CCPROVIDER_DEFAULT_BIN_DIR` or `XDG_DATA_HOME`
+  changed can no longer be found as `claude` and run in an endless loop.
+- `usage` keeps every ledger it cannot read (`.damaged`, `.damaged.2`, ...) instead of only the
+  first, replaces it with an empty one so it is set aside once and not on every run, and treats a ledger with an entry that makes no sense as unreadable, not as valid.
+
+### Changed
+
+- An option that belongs to one command (`--format`, `--since`, `--by`, `--json`, `--rebuild`,
+  `--off`, `--no-statusline`) is refused on the others, instead of being ignored: `usage --format
+  json` used to print the table with exit 0.
+- `ccprovider statusline add` checks for a working python before it downloads anything, so
+  offline or without python you are told the real blocker.
+- A status line script of yours that calls the badge is recognised as the footer, so it is not
+  offered again after `add`. A command using `$CLAUDE_CONFIG_DIR` is judged by the variable as
+  set, not as the real config directory, which would hide a footer that fails in a profile.
+- `ccprovider doctor` no longer stops at "No profiles yet": the default `claude`, the footer and
+  leftover commands do not need a profile to be broken.
+- A token footer newer than the pinned one is left alone by `statusline add` and not reported as
+  stale by `doctor`.
+- `python3` and `python` can no longer be installed as command names: ccprovider runs them for
+  the token footer, and skips a launcher of ccprovider's own that already has one of those names.
+- `rename` stops when any usage is already filed under the new name, and says what to do: move it
+  aside if it is a deleted profile's, or `mv` it back if an earlier rename of this profile was
+  interrupted. Guessing either way would hand a profile somebody else's numbers or lose its own.
+- `usage` prints colour only to a terminal, and never when `NO_COLOR` is set.
+- A `claude` run inside a session that `ccprovider use` started (a hook, a subagent's shell) is
+  no longer pulled onto the default profile. Sessions carry `CCPROVIDER_SESSION=1`, and the
+  default wrapper, which says it is the default (`--from-default`), passes straight through to
+  the real `claude` with the session's own environment when it finds the mark. PATH is not
+  touched.
+- A token footer whose script sits inside a profile's directory (what the plugin's own session
+  nudge produces when it is followed from a profile) is flagged by `doctor` and `statusline`,
+  warned about by `rm` before that profile is deleted, and moved into the real config directory by
+  `statusline add`. Removing that profile would otherwise hide the status bar in every profile.
+- Undoing a failed `rename` puts the default wrapper back with the launcher and node it had.
+- `statusline add` no longer says "Installing" when the footer is already up to date.
+- `usage` also compares the last 256 bytes before the stored position, so a transcript that was
+  rewound and then grew past its old size is read again instead of being resumed in the middle.
+- The token footer is recognised by the badge's file name, not by the name appearing anywhere in
+  the command, so `my_tokens_statusline.py` is not taken for it.
+- The default wrapper tells a person at a terminal when it passed a `claude` through because it
+  was run inside a session (a tmux begun from one, say); a hook's stderr stays clean.
+- A ledger written by a newer ccprovider is left exactly as it is: `usage` reports from the
+  transcripts that still exist and does not save, instead of replacing it with an empty one.
+- `statusline` no longer tells the owner of a script that calls the badge to "update" it, which
+  `doctor` did not either; the command is read with single quotes and `${VAR:-default}`; the
+  chain wrapper is not "working" without the badge; and installing says that it is working.
+- `usage` no longer overwrites a ledger it cannot read (it keeps it as `.damaged`), a second
+  `--rebuild` keeps the `.bak` that holds more, any message id is accepted whatever its
+  spelling, one transcript that cannot be opened no longer aborts the report, and a very long
+  line is read in linear time.
+- `which` is no longer a reserved command name: `ccprovider use` stopped running it when it
+  began finding `claude` itself.
+- `ccprovider use` now finds `claude` by walking `PATH` itself, and skips the default
+  wrapper's directory, instead of asking `which`. A wrapper called `claude` can no longer
+  call itself, and a `PATH` with no `which` on it no longer breaks the lookup.
+
 ## [0.1.4] - 2026-10-16
 
 ### Added
@@ -134,7 +259,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kilaslab/ccprovider/compare/v0.1.1...v0.1.2
