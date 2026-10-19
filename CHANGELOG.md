@@ -6,6 +6,16 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-19
+
+### Changed
+
+- **ccprovider is on npm as `@kilaslab/ccprovider`**: `npm install -g @kilaslab/ccprovider`.
+  The command is still `ccprovider`. Each release is published with a provenance statement,
+  from the same tarball that goes on the GitHub release.
+- Release tarballs are named `kilaslab-ccprovider-X.Y.Z.tgz` (they were `ccprovider-X.Y.Z.tgz`
+  up to 0.2.0).
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
@@ -259,7 +269,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/kilaslab/ccprovider/compare/v0.1.2...v0.1.3

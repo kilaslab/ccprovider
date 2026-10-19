@@ -33,7 +33,7 @@ command: `glm`, `deepseek`, whatever you named it.
 ```bash
 git clone https://github.com/kilaslab/ccprovider && cd ccprovider
 npm install && npm link     # builds it, and puts `ccprovider` on your PATH
-                            # (once it is on npm: `npm install -g ccprovider`)
+                            # (or, from the registry: `npm install -g @kilaslab/ccprovider`)
 
 ccprovider add              # pick a provider, paste a key
 deepseek                    # launches claude, pointed at DeepSeek
@@ -67,9 +67,16 @@ There is no proxy and no request translation. `ccprovider` sets environment vari
 ## Install
 
 Needs **Node 20.11 or newer** on macOS or Linux (WSL works), and Claude Code on your
-`PATH`. Bun is only for developing ccprovider; you don't need it to use it. ccprovider is
-not on the npm registry yet, so until it is, use one of the first two routes. Neither
-touches the registry for ccprovider itself.
+`PATH`. Bun is only for developing ccprovider; you don't need it to use it.
+
+**From npm.** The command is still `ccprovider`; the package lives under the `@kilaslab`
+scope, with a build-provenance statement you can see on its npm page:
+
+```bash
+npm install -g @kilaslab/ccprovider
+```
+
+The other two routes never touch the registry for ccprovider itself.
 
 **Clone it and use it.** The whole thing, no global install required:
 
@@ -87,15 +94,11 @@ you change something, `bun run src/cli.ts add` runs the TypeScript as it is.
 carries the packed package, already built, with a build-provenance attestation you can check:
 
 ```bash
-npm install -g https://github.com/kilaslab/ccprovider/releases/download/vX.Y.Z/ccprovider-X.Y.Z.tgz
-gh attestation verify ccprovider-X.Y.Z.tgz --repo kilaslab/ccprovider     # after downloading it
+npm install -g https://github.com/kilaslab/ccprovider/releases/download/vX.Y.Z/kilaslab-ccprovider-X.Y.Z.tgz
+gh attestation verify kilaslab-ccprovider-X.Y.Z.tgz --repo kilaslab/ccprovider     # after downloading it
 ```
 
-**From npm**, once it is published there:
-
-```bash
-npm install -g ccprovider
-```
+Up to 0.2.0 the file is called `ccprovider-X.Y.Z.tgz`; from 0.2.1 it is `kilaslab-ccprovider-X.Y.Z.tgz`.
 
 After updating any of these, run `ccprovider install` to refresh launcher commands that
 point at the old copy (see [Profiles as commands](#profiles-as-commands)).

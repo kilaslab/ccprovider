@@ -405,7 +405,7 @@ describe('selfLauncher', () => {
   })
 
   test('an npm-style bin symlink resolves to the real file inside the package', () => {
-    const pkg = join(home, 'lib/node_modules/ccprovider/dist')
+    const pkg = join(home, 'lib/node_modules/@kilaslab/ccprovider/dist')
     mkdirSync(pkg, { recursive: true })
     const real = join(pkg, 'cli.js')
     writeFileSync(real, '')

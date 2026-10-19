@@ -10,7 +10,7 @@ name: Release
 #     what the release page says;
 #   - the tagged commit must be on main, so a tag pushed on an unreviewed branch cannot ship;
 #   - a tag with a hyphen (v0.2.0-rc.1) is a pre-release on GitHub and goes to npm under the
-#     `next` dist-tag, so `npm install ccprovider` never resolves to it.
+#     `next` dist-tag, so `npm install @kilaslab/ccprovider` never resolves to it.
 #
 # Also worth setting in the repository: a tag ruleset restricting who can create `v*`.
 on:
@@ -57,20 +57,20 @@ jobs:
         run: |
           set -euo pipefail
           npm pack --silent
-          npm install -g --prefix "$RUNNER_TEMP/smoke" ./ccprovider-*.tgz
+          npm install -g --prefix "$RUNNER_TEMP/smoke" ./kilaslab-ccprovider-*.tgz
           test "$("$RUNNER_TEMP/smoke/bin/ccprovider" --version)" = "$(node -p 'require("./package.json").version')"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ccprovider-*.tgz
+          subject-path: kilaslab-ccprovider-*.tgz
 
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac
-          gh release create "$GITHUB_REF_NAME" ccprovider-*.tgz --generate-notes --verify-tag $pre
+          gh release create "$GITHUB_REF_NAME" kilaslab-ccprovider-*.tgz --generate-notes --verify-tag $pre
 
       - name: Publish to npm
         if: env.NPM_TOKEN != ''
@@ -78,7 +78,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           case "$GITHUB_REF_NAME" in *-*) tag=next ;; *) tag=latest ;; esac
-          npm publish ./ccprovider-*.tgz --provenance --access public --tag "$tag"
+          npm publish ./kilaslab-ccprovider-*.tgz --provenance --access public --tag "$tag"
 
       - name: Say what was skipped
         if: env.NPM_TOKEN == ''
