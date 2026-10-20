@@ -527,3 +527,223 @@ describe('uninstall', () => {
   })
 })
 
+describe('settings', () => {
+  test('bare shows the global default and how each profile resolves', () => {
+    const r = run('settings')
+    expect(r.status).toBe(0)
+    expect(r.out).toContain('shareSessions  false')
+    expect(r.out).toContain('glm')
+    expect(r.out).toContain('inherits — isolated')
+  })
+
+  test('set flips the global; a per-profile override beats it; unset inherits again', () => {
+    expect(run('settings', 'set', 'shareSessions', 'true').status).toBe(0)
+    expect(run('settings').out).toContain('shareSessions  true')
+    expect(run('settings').out).toContain('inherits — shares with ~/.claude')
+    expect(run('settings', 'set', 'shareSessions', 'false', 'glm').status).toBe(0)
+    expect(run('settings').out).toContain('own override')
+    expect(run('settings', 'unset', 'shareSessions', 'glm').status).toBe(0)
+    expect(run('settings').out).toContain('inherits — shares with ~/.claude')
+  })
+
+  test('a subscription profile never shares', () => {
+    saveStore(paths, { version: 1, providers: { work: { kind: 'oauth', baseUrl: '', aliases: {}, preset: 'claude' } } })
+    const r = run('settings', 'set', 'shareSessions', 'true', 'work')
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('login')
+  })
+
+  test('refuses a key, a value, or arguments it does not understand', () => {
+    for (const args of [['set', 'theme', 'dark'], ['set', 'shareSessions', 'maybe'], ['set', 'shareSessions'], ['unset', 'shareSessions'], ['enable']]) {
+      expect(run('settings', ...args).status).toBe(1)
+    }
+  })
+
+  test('the file is private, beside providers.json', () => {
+    expect(run('settings', 'set', 'shareSessions', 'true').status).toBe(0)
+    const file = join(home, 'config', 'ccprovider', 'settings.json')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+  })
+})
+
+describe('sharing sessions', () => {
+  const KEY = 'sk-test-0123456789abcdef'
+  let fakebin: string
+  beforeEach(() => {
+    fakebin = join(home, 'fakebin')
+    mkdirSync(fakebin)
+    writeFileSync(join(fakebin, 'claude'), '#!/bin/sh\nprintf "CFG=%s\\nSESSION=%s\\n" "$CLAUDE_CONFIG_DIR" "$CCPROVIDER_SESSION"\n', { mode: 0o755 })
+  })
+  /** The CLI with only the fake claude on PATH, so `use` launches that. */
+  const useCli = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], {
+      env: { ...env, PATH: `${fakebin}:/usr/bin:/bin` },
+      encoding: 'utf8',
+    })
+    return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, '') }
+  }
+  const share = () => {
+    saveStore(paths, {
+      version: 1,
+      providers: { glm: { baseUrl: 'https://api.z.ai/api/anthropic', aliases: { opus: 'm', sonnet: 'm', haiku: 's', subagent: 's' }, shareSessions: true } },
+    })
+  }
+  const line = (id: string, input: number, output: number) =>
+    JSON.stringify({ type: 'assistant', message: { id, model: 'glm-5.3', content: [{ type: 'text', text: 'private' }], usage: { input_tokens: input, output_tokens: output } }, timestamp: new Date(Date.UTC(2026, 9, 10, 12) * 1).toISOString() })
+
+  test('an isolated profile launches in its own directory, a shared one in ~/.claude', async () => {
+    await new FileStore(dirname(paths.configFile)).set('glm', KEY)
+    expect(useCli('use', 'glm').out).toContain(`CFG=${join(home, 'data', 'ccprovider', 'dirs', 'glm')}`)
+    expect(useCli('use', 'glm').out).toContain('SESSION=1')
+    share()
+    expect(useCli('use', 'glm').out).toContain(`CFG=${join(home, '.claude')}`)
+  })
+
+  // Measured: unset, Claude Code keeps its global state in ~/.claude.json; set to ~/.claude it
+  // moves to ~/.claude/.claude.json. Exporting it for a shared session would split the two.
+  test('a shared session leaves CLAUDE_CONFIG_DIR unset when the user never declared one', async () => {
+    await new FileStore(dirname(paths.configFile)).set('glm', KEY)
+    share()
+    const { CLAUDE_CONFIG_DIR: _declared, ...undeclared } = env
+    const r = spawnSync(process.execPath, [CLI, 'use', 'glm'], { env: { ...undeclared, PATH: `${fakebin}:/usr/bin:/bin` }, encoding: 'utf8' })
+    expect(r.stdout).toContain('CFG=\n')
+    const e = spawnSync(process.execPath, [CLI, 'env', 'glm'], { env: { ...undeclared, PATH: `${fakebin}:/usr/bin:/bin` }, encoding: 'utf8' })
+    expect(e.stdout).not.toContain('CLAUDE_CONFIG_DIR')
+  })
+
+  test('env reports the shared directory too', async () => {
+    await new FileStore(dirname(paths.configFile)).set('glm', KEY)
+    share()
+    const r = useCli('env', 'glm')
+    expect(r.status).toBe(0)
+    expect(r.out).toContain(`export CLAUDE_CONFIG_DIR='${join(home, '.claude')}'`)
+  })
+
+  test('agents refuse while sharing, naming the way out', () => {
+    share()
+    const r = useCli('agents', 'add', 'glm', 'some-agent')
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('shares its config directory')
+    expect(r.out).toContain('settings set shareSessions false glm')
+  })
+
+  test('usage counts the old sessions in the profile dir and the shared directory once', () => {
+    share()
+    const glmProjects = join(home, 'data', 'ccprovider', 'dirs', 'glm', 'projects')
+    mkdirSync(join(glmProjects, '-old'), { recursive: true })
+    writeFileSync(join(glmProjects, '-old', 's.jsonl'), line('msg_old', 5, 1) + '\n')
+    const sharedProjects = join(home, '.claude', 'projects')
+    mkdirSync(join(sharedProjects, '-new'), { recursive: true })
+    writeFileSync(join(sharedProjects, '-new', 's.jsonl'), line('msg_new', 7, 2) + '\n')
+    const r = spawnSync(process.execPath, [CLI, 'usage', 'glm', '--json'], { env, encoding: 'utf8' })
+    expect(JSON.parse(r.stdout).rows).toEqual([
+      { profile: 'glm', model: 'glm-5.3', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, cacheReported: false },
+      { profile: 'shared', model: 'glm-5.3', calls: 1, input: 7, output: 2, cacheRead: 0, cacheWrite: 0, cacheReported: false },
+    ])
+  })
+
+  // Regression: the group was keyed `shared`, and a profile can be called that.
+  test('a profile named shared is not merged with the shared directory', () => {
+    const store = loadStore(paths)
+    store.providers.shared = { baseUrl: 'https://x.dev/anthropic', aliases: { opus: 'm', sonnet: 'm', haiku: 's', subagent: 's' }, shareSessions: false }
+    store.providers.glm = { ...store.providers.glm!, shareSessions: true }
+    saveStore(paths, store)
+    const own = join(home, 'data', 'ccprovider', 'dirs', 'shared', 'projects')
+    mkdirSync(join(own, '-own'), { recursive: true })
+    writeFileSync(join(own, '-own', 's.jsonl'), line('msg_own', 5, 1) + '\n')
+    const sharedProjects = join(home, '.claude', 'projects')
+    mkdirSync(join(sharedProjects, '-new'), { recursive: true })
+    writeFileSync(join(sharedProjects, '-new', 's.jsonl'), line('msg_new', 7, 2) + '\n')
+    const r = spawnSync(process.execPath, [CLI, 'usage', '--json'], { env, encoding: 'utf8' })
+    const rows = JSON.parse(r.stdout).rows as Array<{ profile: string; input: number }>
+    expect(Object.fromEntries(rows.map((x) => [x.profile, x.input]))).toEqual({ shared: 5, 'shared (~/.claude)': 7 })
+  })
+
+  test('two profiles sharing the directory count it once', () => {
+    const store = loadStore(paths)
+    store.providers.kimi = { baseUrl: 'https://x.dev/anthropic', aliases: { opus: 'm', sonnet: 'm', haiku: 's', subagent: 's' }, shareSessions: true }
+    saveStore(paths, store)
+    const sharedProjects = join(home, '.claude', 'projects')
+    mkdirSync(join(sharedProjects, '-new'), { recursive: true })
+    writeFileSync(join(sharedProjects, '-new', 's.jsonl'), line('msg_new', 7, 2) + '\n')
+    const r = spawnSync(process.execPath, [CLI, 'usage', '--json'], { env, encoding: 'utf8' })
+    const rows = JSON.parse(r.stdout).rows.filter((x: { profile: string }) => x.profile === 'shared')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].calls).toBe(1)
+  })
+
+  test('ls says a shared profile shares', () => {
+    share()
+    expect(run('ls').out).toContain('shared with')
+  })
+
+  test('doctor reports the shared directory instead of links', () => {
+    share()
+    const r = useCli('doctor', 'glm')
+    expect(r.out).toContain('config directory')
+    expect(r.out).toContain('shared with')
+    expect(r.out).not.toContain('shared config links')
+  })
+})
+
+describe('init', () => {
+  const rcPath = () => join(home, '.zshrc')
+  const initWith = (shell: string | undefined, ...args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, 'init', ...args], {
+      env: { ...env, ...(shell ? { SHELL: shell } : {}) },
+      encoding: 'utf8',
+    })
+    return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, '') }
+  }
+
+  test('-y writes a marker block, and a second run changes nothing', () => {
+    const r = initWith('/bin/zsh', '-y')
+    expect(r.status).toBe(0)
+    const text = readFileSync(rcPath(), 'utf8')
+    expect(text).toContain('# >>> ccprovider path >>>')
+    expect(text).toContain(`export PATH="${paths.defaultBinDir}:$PATH"`)
+    const again = initWith('/bin/zsh', '-y')
+    expect(again.out).toContain('already up to date')
+    expect(readFileSync(rcPath(), 'utf8')).toBe(text)
+  })
+
+  test('without -y and without a terminal it prints what it would add and edits nothing', () => {
+    const r = initWith('/bin/zsh')
+    expect(r.status).toBe(1)
+    expect(existsSync(rcPath())).toBe(false)
+    expect(r.out).toContain('export PATH=')
+    expect(r.out).toContain('-y')
+  })
+
+  test('an unknown shell gets the line to add itself, and nothing is written', () => {
+    const r = initWith('/usr/bin/fish')
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('export PATH=')
+    expect(existsSync(rcPath())).toBe(false)
+  })
+
+  // Regression: the block was built from the current PATH, and the block is what puts the
+  // launchers dir on PATH. The second run, in the shell the first run set up, saw it there
+  // and wrote a block without it, so the shell after that lost it again.
+  test('a second run from the shell the first one set up keeps the launchers dir', () => {
+    const first = spawnSync(process.execPath, [CLI, 'init', '-y'], { env: { ...env, SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' }, encoding: 'utf8' })
+    expect(first.status).toBe(0)
+    const before = readFileSync(rcPath(), 'utf8')
+    const again = spawnSync(process.execPath, [CLI, 'init', '-y'], { env: { ...env, SHELL: '/bin/zsh', PATH: `${paths.defaultBinDir}:${paths.binDir}:/usr/bin:/bin` }, encoding: 'utf8' })
+    expect(again.status).toBe(0)
+    expect(readFileSync(rcPath(), 'utf8')).toBe(before)
+    expect(before).toContain(`export PATH="${paths.binDir}:$PATH"`)
+  })
+
+  test('binDir off PATH joins the block too', () => {
+    const r = spawnSync(process.execPath, [CLI, 'init', '-y'], {
+      env: { ...env, SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    })
+    expect(r.status).toBe(0)
+    const text = readFileSync(rcPath(), 'utf8')
+    expect(text).toContain(`export PATH="${paths.defaultBinDir}:$PATH"`)
+    expect(text).toContain(`export PATH="${paths.binDir}:$PATH"`)
+  })
+})
+

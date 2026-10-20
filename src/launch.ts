@@ -90,9 +90,19 @@ export const MANAGED_VARS = [
   'CLAUDE_CODE_EFFORT_LEVEL',
 ] as const
 
+/** Variables set for a provider profile only. A subscription profile talks to Anthropic, so
+ *  they are neither cleared nor forced there and the user's own value passes through.
+ *
+ *  ENABLE_TOOL_SEARCH=false makes Claude Code send every tool's schema up front. With it on,
+ *  most tools arrive as names to be loaded through a ToolSearch tool, which third-party
+ *  models do not use: glm-5.3-flash treated ToolSearch as its only tool and said it had no
+ *  Bash, with Bash in the session's tool list. */
+export const PROVIDER_VARS = ['ENABLE_TOOL_SEARCH'] as const
+
 export interface LaunchOptions {
   profile: Profile
-  configDir: string
+  /** The directory to export as CLAUDE_CONFIG_DIR, or null to leave it unset. */
+  configDir: string | null
   apiKey: string
   /** A tier name (`opus`, `sonnet`, …) or a raw provider model ID. */
   model?: string | null
@@ -171,7 +181,7 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
   // so leaving one in place for an unmapped slot would be self-defeating.
   for (const key of MANAGED_VARS) delete env[key]
 
-  env.CLAUDE_CONFIG_DIR = configDir
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   // A subscription profile talks to Anthropic with the login stored in its own config
   // directory, so nothing else is injected — the strip pass above already removed
   // anything inherited that would compete with that login.
@@ -183,6 +193,8 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
   // Some providers document an explicitly blank ANTHROPIC_API_KEY rather than an
   // absent one. Re-added after the strip pass so it lands as "" and not inherited.
   if (profile.blankApiKey) env.ANTHROPIC_API_KEY = ''
+
+  env.ENABLE_TOOL_SEARCH = 'false'
 
   for (const slot of Object.keys(SLOT_ENV) as AliasSlot[]) {
     const model = profile.aliases[slot]
@@ -214,7 +226,7 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
  *  the auth token's value. */
 export function describeEnv(env: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const k of MANAGED_VARS) {
+  for (const k of [...MANAGED_VARS, ...PROVIDER_VARS]) {
     if (k in env) out[k] = k === 'ANTHROPIC_AUTH_TOKEN' ? redact(env[k]!) : env[k]!
   }
   return out

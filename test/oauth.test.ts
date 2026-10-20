@@ -80,6 +80,7 @@ describe('oauth profile doctor', () => {
     paths = {
       claudeDir: join(home, '.claude'),
       configFile: join(home, 'providers.json'),
+      settingsFile: join(home, 'settings.json'),
       dirsRoot: join(home, 'dirs'),
       cacheDir: join(home, 'cache'),
       binDir: join(home, 'bin'),
@@ -96,6 +97,14 @@ describe('oauth profile doctor', () => {
     expect(labels.some((l) => l.startsWith('API key'))).toBe(false)
     expect(labels).not.toContain('model tier mapping')
     expect(labels).not.toContain('endpoint format')
+  })
+
+  test('leaves ENABLE_TOOL_SEARCH in the settings env alone: ccprovider does not set it for a subscription', async () => {
+    const dir = profileDir(paths, 'work')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'auto:5' } }))
+    const checks = await runDoctor('work', work, paths, new MemoryStore(), { env: { PATH: '/usr/bin' } })
+    expect(checks.find((c) => c.label === 'settings.json overrides')!.status).toBe('ok')
   })
 
   test('reports credentials found in the profile directory', async () => {

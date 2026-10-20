@@ -54,6 +54,14 @@ export const emptyLedger = (): Ledger => ({ version: 1, files: {}, calls: {} })
 /** Where a profile's ledger lives. The profile name is already validated as a file name. */
 export const ledgerPath = (paths: Paths, name: string): string => join(paths.usageDir, `${name}.json`)
 
+/** The ledger for a shared config directory — everything that ran in it, the ccprovider
+ *  profiles that share it and the plain `claude` alike, since transcripts never name a
+ *  profile. Keyed by the directory, in a subdirectory of its own so the name can never
+ *  collide with a profile's ledger: `ledgerFiles` lists flat `<name>.json*` files, so
+ *  `rm` and `rename` never touch this one — other profiles may still share the directory. */
+export const sharedLedgerPath = (paths: Paths, dir: string): string =>
+  join(paths.usageDir, 'shared', `${createHash('sha256').update(dir).digest('hex').slice(0, 16)}.json`)
+
 /** The ledger, the copy `--rebuild` leaves of the one it replaced, and the one set aside when
  *  it could not be read. They hold the same history, so they go wherever the profile goes. */
 export function ledgerFiles(paths: Paths, name: string): string[] {
@@ -81,8 +89,7 @@ export interface Note {
  *  - `--rebuild` forgets the ledger, so the one it replaces is kept as `.bak`. A second rebuild
  *    would copy the already-shrunk ledger over the only copy that still holds the history, so
  *    the backup that holds more calls stays. */
-export function prepareLedger(paths: Paths, name: string, opts: { rebuild: boolean }): { ledger: Ledger; notes: Note[]; readOnly: boolean } {
-  const path = ledgerPath(paths, name)
+export function prepareLedger(paths: Paths, name: string, opts: { rebuild: boolean }, path: string = ledgerPath(paths, name)): { ledger: Ledger; notes: Note[]; readOnly: boolean } {
   const notes: Note[] = []
   const existing = existsSync(path) ? loadLedger(path) : undefined // null: there, and not readable
 

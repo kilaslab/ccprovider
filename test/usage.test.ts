@@ -502,7 +502,7 @@ describe('the first line of a transcript is longer than the fingerprint reads', 
 })
 
 describe('the files that make up a ledger', () => {
-  const p = (): Paths => ({ claudeDir: '', configFile: '', dirsRoot: '', cacheDir: '', binDir: '', defaultBinDir: '', usageDir: join(dir, 'usage') })
+  const p = (): Paths => ({ claudeDir: '', configFile: '', settingsFile: '', dirsRoot: '', cacheDir: '', binDir: '', defaultBinDir: '', usageDir: join(dir, 'usage') })
 
   test('are the ledger, its backup and every file set aside, and no other profile\'s', () => {
     mkdirSync(join(dir, 'usage'))
@@ -522,7 +522,7 @@ describe('the files that make up a ledger', () => {
 })
 
 describe('prepareLedger', () => {
-  const paths = (): Paths => ({ claudeDir: '', configFile: '', dirsRoot: '', cacheDir: '', binDir: '', defaultBinDir: '', usageDir: join(dir, 'usage') })
+  const paths = (): Paths => ({ claudeDir: '', configFile: '', settingsFile: '', dirsRoot: '', cacheDir: '', binDir: '', defaultBinDir: '', usageDir: join(dir, 'usage') })
   const file = (suffix = '') => join(dir, 'usage', `glm.json${suffix}`)
   const ledgerWith = (...ids: string[]) => {
     const l = emptyLedger()

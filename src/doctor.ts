@@ -7,7 +7,7 @@ import { relative, sep } from 'node:path'
 import type { Profile, AliasSlot } from './types.js'
 import { listInstalled, readExplore } from './agents.js'
 import { inspectLinks, LINKED_ENTRIES } from './configdir.js'
-import { missingSlots, SLOT_ENV, findClaude, MANAGED_VARS, STRIPPED_VARS } from './launch.js'
+import { missingSlots, SLOT_ENV, findClaude, MANAGED_VARS, PROVIDER_VARS, STRIPPED_VARS } from './launch.js'
 import { compareInstalled, HELPER_KEY_RE, readInstalledMcp, registeredIds, resolveServers } from './mcp.js'
 import { findPreset } from './presets.js'
 import { probeEndpoint, probeModel } from './probe.js'
@@ -35,6 +35,9 @@ export interface DoctorOpts {
   env?: Record<string, string | undefined>
   /** What `npx`-based MCP servers will find. Injectable; the default asks the shell. */
   runtime?: Runtime
+  /** The profile runs its sessions in the real config dir (see settings.ts): there are no
+   *  links of its own to check, and its agents and MCP have nowhere of their own to live. */
+  shared?: boolean
 }
 
 export async function runDoctor(
@@ -55,7 +58,13 @@ export async function runDoctor(
   }
 
   // --- profile directory and links
-  if (!existsSync(dir)) {
+  if (opts.shared) {
+    checks.push({
+      label: 'config directory',
+      status: 'ok',
+      detail: `shared with ${paths.claudeDir} — sessions, todos and credentials are the plain claude's`,
+    })
+  } else if (!existsSync(dir)) {
     checks.push({ label: 'profile directory', status: 'warn', detail: `${dir} not created yet (next \`use\` will create it)` })
   } else {
     const rows = inspectLinks(dir)
@@ -85,10 +94,12 @@ export async function runDoctor(
         : `not detected in the profile directory (on macOS it may be in the Keychain) — run \`${name}\` and use /login if it asks`,
     })
     checks.push(commandCheck(name, paths, opts.env ?? process.env))
-    const s = settingsCheck(dir)
+    const s = settingsCheck(opts.shared ? paths.claudeDir : dir, OWNED_ENV)
     if (s) checks.push(s)
-    const a = agentsCheck(name, dir)
-    if (a) checks.push(a)
+    if (!opts.shared) {
+      const a = agentsCheck(name, dir)
+      if (a) checks.push(a)
+    }
     return checks
   }
 
@@ -113,11 +124,19 @@ export async function runDoctor(
   // --- the command, the shared settings that can silently override us, and MCP
   const env = opts.env ?? process.env
   checks.push(commandCheck(name, paths, env))
-  const settings = settingsCheck(dir)
+  const settings = settingsCheck(opts.shared ? paths.claudeDir : dir, PROVIDER_OWNED_ENV)
   if (settings) checks.push(settings)
-  const agents = agentsCheck(name, dir)
-  if (agents) checks.push(agents)
-  checks.push(...mcpChecks(name, profile, dir, key, opts.runtime))
+  if (!opts.shared) {
+    const agents = agentsCheck(name, dir)
+    if (agents) checks.push(agents)
+    checks.push(...mcpChecks(name, profile, dir, key, opts.runtime))
+  } else if (profile.mcp?.length) {
+    checks.push({
+      label: 'MCP tools',
+      status: 'warn',
+      detail: `cannot be installed while this profile shares its config directory — \`ccprovider settings set shareSessions false ${name}\` first`,
+    })
+  }
 
   if (opts.skipNetwork || !key) return checks
 
@@ -191,7 +210,7 @@ function commandCheck(name: string, paths: Paths, env: Record<string, string | u
     }
   }
   if (!s.binDirOnPath) {
-    return { label, status: 'warn', detail: `installed, but ${paths.binDir} is not on PATH — add it to your shell's PATH to use \`${name}\`` }
+    return { label, status: 'warn', detail: `installed, but ${paths.binDir} is not on PATH — \`ccprovider init\` adds it (zsh and bash)` }
   }
   if (s.shadowedBy) {
     return { label, status: 'warn', detail: `installed, but \`${name}\` resolves to ${s.shadowedBy} first` }
@@ -203,6 +222,8 @@ function commandCheck(name: string, paths: Paths, env: Record<string, string | u
  *  sets, so this cannot drift from what the launcher actually manages. `CLAUDE_CONFIG_DIR`
  *  is the profile's own directory, and nothing in a settings file can usefully move it. */
 const OWNED_ENV = new Set<string>([...MANAGED_VARS, ...STRIPPED_VARS].filter((v) => v !== 'CLAUDE_CONFIG_DIR'))
+/** A provider profile also owns the variables set for providers only; a subscription does not. */
+const PROVIDER_OWNED_ENV = new Set<string>([...OWNED_ENV, ...PROVIDER_VARS])
 
 /** The ones that decide *where a request goes and who it is sent as*. A settings file
  *  overriding these sends a profile's traffic (or another provider's key) somewhere else
@@ -218,7 +239,7 @@ const ROUTING_ENV = /^(ANTHROPIC_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_TOKEN$|CLAU
  * profile at Z.ai; a stray `CLAUDE_CODE_AUTO_COMPACT_WINDOW` would undo the profile's
  * context-window setting the same way.
  */
-function settingsCheck(dir: string): Check | null {
+function settingsCheck(dir: string, owned: Set<string>): Check | null {
   const file = join(dir, 'settings.json')
   let env: unknown
   try {
@@ -226,7 +247,7 @@ function settingsCheck(dir: string): Check | null {
   } catch {
     return null // no settings file, or not ours to judge
   }
-  const keys = typeof env === 'object' && env !== null ? Object.keys(env).filter((k) => OWNED_ENV.has(k)) : []
+  const keys = typeof env === 'object' && env !== null ? Object.keys(env).filter((k) => owned.has(k)) : []
   const label = 'settings.json overrides'
   if (!keys.length) return { label, status: 'ok', detail: 'sets none of the variables ccprovider manages' }
 
@@ -355,7 +376,7 @@ export function defaultChecks(paths: Paths, knownProfiles: string[], env: Record
     return [{
       label,
       status: 'warn',
-      detail: `installed, but ${paths.defaultBinDir} is not on PATH, so \`claude\` runs ${s.shadowedBy ?? 'nothing'} — put it before that on your PATH`,
+      detail: `installed, but ${paths.defaultBinDir} is not on PATH, so \`claude\` runs ${s.shadowedBy ?? 'nothing'} — \`ccprovider init\` puts it first (zsh and bash)`,
     }]
   }
   if (s.shadowedBy) {
