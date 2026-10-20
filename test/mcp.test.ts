@@ -21,6 +21,7 @@ import {
 } from '../src/mcp.js'
 import { findPreset } from '../src/presets.js'
 import { validateProfile } from '../src/profile.js'
+import { findClaude } from '../src/launch.js'
 import type { Profile } from '../src/types.js'
 
 const glm = findPreset('glm')!
@@ -350,7 +351,17 @@ describe('HELPER_KEY_RE stays in step with the shell helper', () => {
   })
 })
 
-const hasClaude = spawnSync('claude', ['--version'], { encoding: 'utf8' }).status === 0
+// The real binary by path, never the name on PATH: a developer testing ccprovider often
+// has the default wrapper installed first, and `claude mcp …` through it would run
+// `ccprovider use <profile>` instead — against the profile's config dir, not this test's.
+const claude = (() => {
+  try {
+    return findClaude({ PATH: process.env.PATH! })
+  } catch {
+    return null
+  }
+})()
+const hasClaude = claude !== null
 
 describe.skipIf(!hasClaude)('against the real claude (skipped when it is not installed)', () => {
   test('what add-json stores compares equal to what we wrote', () => {
@@ -363,11 +374,11 @@ describe.skipIf(!hasClaude)('against the real claude (skipped when it is not ins
     for (const region of [ZAI, ZHIPU]) {
       for (const s of glm.mcp!.servers) {
         const json = serverJson(s, region)
-        const add = spawnSync('claude', ['mcp', 'add-json', '-s', 'user', s.id, JSON.stringify(json)], { env, encoding: 'utf8' })
+        const add = spawnSync(claude!, ['mcp', 'add-json', '-s', 'user', s.id, JSON.stringify(json)], { env, encoding: 'utf8' })
         expect(add.status).toBe(0)
         const installed = readInstalledMcp(cfg)
         expect(compareInstalled(installed, { spec: s, json })).toBe('ok')
-        spawnSync('claude', ['mcp', 'remove', '-s', 'user', s.id], { env })
+        spawnSync(claude!, ['mcp', 'remove', '-s', 'user', s.id], { env })
       }
     }
   }, 120_000) // 16 real claude invocations; the default 5s budget is far too small

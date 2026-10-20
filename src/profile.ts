@@ -59,6 +59,11 @@ export function validateProfile(raw: unknown, where: string): Profile {
     throw new ProfileError(`${where}: unknown kind "${String(p.kind)}" (expected "oauth" or nothing)`)
   }
   if (p.kind === 'oauth') {
+    // Refused, not dropped: a silently ignored `true` would sit in the file looking set
+    // while the profile kept its login to itself.
+    if (p.shareSessions !== undefined) {
+      throw new ProfileError(`${where}: an oauth profile cannot share a config directory — its login lives in its own`)
+    }
     return {
       kind: 'oauth',
       baseUrl: '',
@@ -97,6 +102,7 @@ export function validateProfile(raw: unknown, where: string): Profile {
     blankApiKey: p.blankApiKey === true,
     preset: optionalString(p.preset, `${where}: preset`) ?? undefined,
     mcp: optionalIdList(p.mcp, `${where}: mcp`),
+    shareSessions: optionalBoolean(p.shareSessions, `${where}: shareSessions`),
     createdAt: optionalString(p.createdAt, `${where}: createdAt`) ?? undefined,
   }
 }
@@ -122,6 +128,12 @@ function optionalIdList(v: unknown, where: string): string[] | undefined {
 function optionalString(v: unknown, where: string): string | null {
   if (v == null) return null
   if (typeof v !== 'string') throw new ProfileError(`${where} must be a string`)
+  return v
+}
+
+function optionalBoolean(v: unknown, where: string): boolean | undefined {
+  if (v == null) return undefined
+  if (typeof v !== 'boolean') throw new ProfileError(`${where} must be true or false`)
   return v
 }
 

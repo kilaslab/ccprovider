@@ -96,6 +96,13 @@ totals do not shrink when the transcripts go.
   empty ledger once the copy is safe, so this happens once and not on every run. A name that
   was used is never reused: the next one is `.damaged.2`, then `.damaged.3`.
 - `rename` moves a profile's ledger and every file above with it, and `rm` deletes all of them.
+- A profile with `shareSessions` on runs in `~/.claude` itself, so its report gains a
+  **`shared`** group: everything that ran in that directory — the profiles that share it and
+  the plain `claude` alike. Transcripts never name a profile, so nothing finer is possible,
+  and the trees are disjoint (the profile's older sessions stay in its own directory), so
+  nothing is counted twice. That group's ledger lives at
+  `~/.local/share/ccprovider/usage/shared/<hash>.json`, keyed by the directory, and `rename`
+  and `rm` leave it alone while any profile may still share the directory.
 - A transcript is read on from where the ledger stopped only while it is still the same file:
   the stored position must sit on a line break and its first line must be the one it began
   with. A transcript written over (compacted, rewound) is read again from its start, which is
@@ -122,8 +129,10 @@ totals do not shrink when the transcripts go.
 - **Runs elsewhere are not here.** A container or an Agent SDK run writes its transcripts
   where it runs. SDK runs on this machine land in the profile only when `CLAUDE_CONFIG_DIR`
   points at it ([docs/agent-sdk.md](agent-sdk.md)).
-- **`~/.claude` itself is not counted**, only the profiles' directories. A Claude
-  subscription profile (see `ccprovider add`) is the way to count your Anthropic use.
+- **`~/.claude` itself is not counted** for an ordinary profile, only the profiles'
+  directories. A profile with `shareSessions` on is the exception: what ran in `~/.claude`
+  shows up under its `shared` group, above. A Claude subscription profile (see
+  `ccprovider add`) is the way to count your Anthropic use.
 - A transcript written after the last read is counted the next time you run it. A line still
   being written is left for then, so a call is never half counted.
 - A line that looks like a call and cannot be used (cut off, or with no id or an absurdly long

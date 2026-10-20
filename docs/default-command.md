@@ -36,7 +36,20 @@ would take over all of them (see [the warning about `coding-helper`](../README.m
    export PATH="$HOME/.local/share/ccprovider/bin:$PATH"
    ```
 
-   Add that line to your shell startup file. ccprovider never edits one for you.
+   At a terminal it offers to add that line for you. Say yes and it writes it into your
+   `~/.zshrc` (zsh) or bash's startup file (`~/.bashrc`; on macOS, where Terminal and iTerm
+   start login shells, the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that
+   exists), between marker lines:
+
+   ```bash
+   # >>> ccprovider path >>>
+   export PATH="$HOME/.local/share/ccprovider/bin:$PATH"
+   # <<< ccprovider path <<<
+   ```
+
+   `ccprovider init` writes the same block any time, and replaces its own block on re-run
+   instead of adding a second one. Everything around the markers is yours and is never
+   touched. Any other shell, or a file you would rather edit yourself: add the line by hand.
 3. Open a new shell and check:
 
    ```bash
@@ -77,6 +90,9 @@ login are the profile's own (see
 
 So sessions you had in `~/.claude` before do not show up in `claude --resume`; they are still
 there, and calling the real binary by its path (`~/.local/bin/claude`) reads them again.
+If you want the opposite — one directory of sessions for every profile and the plain
+`claude` — see `ccprovider settings set shareSessions` in
+[the README](../README.md#profiles-are-isolated-but-not-duplicated).
 
 ## Getting the real Claude back
 
@@ -96,7 +112,8 @@ there, and calling the real binary by its path (`~/.local/bin/claude`) reads the
 ## A server or a mini PC
 
 On a machine you reach over SSH, or run from cron or systemd, `claude` is started by a shell
-that is **not interactive**, and it does not read the file you added the `PATH` line to.
+that is **not interactive**, and it does not read the file you added the `PATH` line to
+(`ccprovider init` only writes the interactive ones: `~/.zshrc`, and bash's `~/.bashrc` or, on macOS, `~/.bash_profile`).
 Measured: a non-interactive `zsh -c` ignores `~/.zshrc` and reads `~/.zshenv`; a
 non-interactive `bash -c` ignores `~/.bashrc`, and a login `bash` reads `~/.profile`.
 
@@ -128,8 +145,8 @@ instead; `ccprovider doctor` names the backend in use (see
 
 | You see | It means |
 |---|---|
-| `installed, but … is not on PATH, so claude runs …` | The directory is not on `PATH` in this shell. Add the line from step 2, in the right startup file. |
-| `installed, but claude resolves to … first` | Another `claude` comes earlier on `PATH`. Put the ccprovider directory before it. |
+| `installed, but … is not on PATH, so claude runs …` | The directory is not on `PATH` in this shell. `ccprovider init` adds the line (zsh and bash); on a server, see the table below. |
+| `installed, but claude resolves to … first` | Another `claude` comes earlier on `PATH`. Put the ccprovider directory before it — `ccprovider init` does it (zsh and bash). |
 | `points at …, which is missing or not executable` | The script remembers where ccprovider and Node were when you made it. After a Node version change or a move, run `ccprovider default <profile>` again. |
 | `runs profile "x", which no longer exists` | The profile was removed some other way. `ccprovider default --off`, or pick another profile. |
 | `… is not a ccprovider wrapper` | A different file named `claude` is in that directory. ccprovider leaves it alone; move it aside and run `ccprovider default <profile>` again. |

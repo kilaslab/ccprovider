@@ -34,6 +34,7 @@ beforeEach(() => {
   paths = {
     claudeDir: join(home, '.claude'),
     configFile: join(home, 'providers.json'),
+    settingsFile: join(home, 'settings.json'),
     dirsRoot: join(home, 'dirs'),
     cacheDir: join(home, 'cache'),
     binDir: join(home, 'bin'),
@@ -144,6 +145,13 @@ describe('shared settings.json overrides', () => {
     const c = find(await doctor(profile()), label)!
     expect(c.status).toBe('warn')
     expect(c.detail).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
+  })
+
+  test('ENABLE_TOOL_SEARCH in the settings env is a warning: it brings back the missing-Bash glm session', async () => {
+    writeSettings({ ENABLE_TOOL_SEARCH: 'true' })
+    const c = find(await doctor(profile()), label)!
+    expect(c.status).toBe('warn')
+    expect(c.detail).toContain('ENABLE_TOOL_SEARCH')
   })
 
   test.each(['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_SUBAGENT_MODEL', 'ANTHROPIC_MODEL'])(

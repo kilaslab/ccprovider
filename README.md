@@ -170,6 +170,12 @@ CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432      # compact below it, for headroom
 
 The `[1m]` suffix covers the 1M case; this covers every other size.
 
+**A third-party model may report that it has no Bash.** Claude Code sends most tools as
+names to be loaded through a `ToolSearch` tool, and a model that does not use it sees
+`ToolSearch` as its only tool (glm-5.3-flash said it had no shell, with `Bash` in the
+session's tool list). `ccprovider` sets `ENABLE_TOOL_SEARCH=false` so every tool arrives
+whole; a subscription profile keeps Claude Code's own default.
+
 **Not every model can drive an agent.** Of OpenRouter's 400+ models, roughly 70 can't
 tool-call at all. Pick one and Claude Code looks broken rather than telling you why.
 `ccprovider add` hides them.
@@ -200,6 +206,20 @@ Links are reconciled before every launch, so anything you add to `~/.claude` lat
 up without re-running setup. `ccprovider rm` unlinks rather than follows, so your real
 config is never touched.
 
+If you would rather one provider's sessions be the same sessions `claude --resume` sees,
+turn on sharing — globally, or for one profile:
+
+```bash
+ccprovider settings set shareSessions true          # every profile that has no override
+ccprovider settings set shareSessions true glm      # just glm
+```
+
+A sharing profile runs in `~/.claude` itself, so its new sessions, `--resume` history and
+todos are the plain `claude`'s. A Claude subscription profile never shares: its login
+lives in its own directory, and sharing would put it next to everyone else's sessions.
+While a profile shares it has no agents or MCP servers of its own to install. Sessions it
+had before stay in its own directory; `ccprovider usage glm` still reports them.
+
 ## Commands
 
 | Command | What it does |
@@ -220,6 +240,8 @@ config is never touched.
 | `ccprovider agents <name>` | list a profile's agents and its Explore model |
 | `ccprovider agents add\|rm <name> <id…>` | install or remove agents |
 | `ccprovider agents explore <name> <model>` | run Explore on `haiku`, `sonnet`, `opus`, a model ID, or `default` |
+| `ccprovider settings [set shareSessions true\|false [name]]` | share sessions with the plain `claude`, globally or per profile |
+| `ccprovider init` | add ccprovider's `PATH` entries to your zsh or bash startup file |
 
 `add` and `edit` take `--refresh` to bypass the 24-hour model-list cache. `add` takes
 `--no-install` to skip installing the command. `-y` skips confirmation prompts.
@@ -325,8 +347,8 @@ reads your key and builds the environment. Because it is plain `sh`, it works th
 from bash, zsh and fish.
 
 `~/.local/bin` has to be on your `PATH` (Claude Code installs itself there too, so it
-usually is). If it isn't, `add` and `doctor` say so and print the line to add. Nothing
-edits your shell profile for you.
+usually is). If it isn't, `add` and `doctor` say so and print the line to add;
+`ccprovider init` adds it for you (zsh and bash), between marker lines you can delete.
 
 `-m` isn't available through the command (the command owns your arguments). For a
 one-off tier, use `ccprovider use glm -m haiku`, or claude's own flag through the
@@ -395,8 +417,9 @@ ccprovider default --off     # the real claude again
 
 This writes a small script called `claude` into `~/.local/share/ccprovider/bin/`, not over
 Claude Code's own `~/.local/bin/claude`, which its updater rewrites. Put that directory before
-Claude Code's on your `PATH`; `default` prints the line, and `doctor` checks the order. It
-never writes a provider into `~/.claude/settings.json`. Servers and mini PCs reached over SSH
+Claude Code's on your `PATH`; `default` prints the line, `ccprovider init` adds it to your
+`~/.zshrc`, or bash's startup file (`~/.bashrc`; on macOS the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists) (and `default` offers to, at a terminal), and `doctor` checks the
+order. It never writes a provider into `~/.claude/settings.json`. Servers and mini PCs reached over SSH
 need the line in a different startup file, and IDE extensions and the Agent SDK are not
 reached at all: [docs/default-command.md](docs/default-command.md).
 
@@ -527,6 +550,7 @@ the old host, and `doctor` reports any that remain.
 | | |
 |---|---|
 | profiles | `~/.config/ccprovider/providers.json` |
+| settings | `~/.config/ccprovider/settings.json` |
 | API keys | macOS Keychain · libsecret on Linux · encrypted file as fallback |
 | profile dirs | `~/.local/share/ccprovider/dirs/<name>/` |
 | commands | `~/.local/bin/<name>` (override with `CCPROVIDER_BIN_DIR`) |
@@ -585,8 +609,11 @@ command, or in an MCP config.
 
 <br>
 
-No. Session history, `projects/` and cost tracking are per profile. Only skills, plugins,
-rules, `CLAUDE.md` and `settings.json` are shared, through symlinks to `~/.claude`.
+Not unless you ask for it. Session history, `projects/` and cost tracking are per profile.
+Only skills, plugins, rules, `CLAUDE.md` and `settings.json` are shared, through symlinks
+to `~/.claude`. `ccprovider settings set shareSessions true [profile]` opts a profile into
+running in `~/.claude` itself, so its sessions are the plain `claude`'s; see
+[Profiles are isolated but not duplicated](#profiles-are-isolated-but-not-duplicated).
 
 </details>
 

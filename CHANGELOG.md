@@ -6,6 +6,42 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
+### Added
+
+- **`ccprovider settings`**, and session sharing. `settings set shareSessions true|false`
+  sets a global default; passing a profile (`… true glm`) sets that profile's own override,
+  and `settings unset shareSessions <profile>` drops it again. A sharing profile runs its
+  sessions in `~/.claude` itself, so its `--resume` history, todos and credentials are the
+  plain `claude`'s. Safety rails: a Claude subscription profile never shares (its login
+  lives in its own config directory, and the store refuses the field on one outright);
+  agents and MCP servers are refused while a profile shares (there is nothing of its own
+  to register them in); a shared session leaves `CLAUDE_CONFIG_DIR` unset unless you set it
+  yourself, because Claude Code keeps its global state in `~/.claude.json` then and in
+  `~/.claude/.claude.json` when it is set; `doctor` and `ls` report the shared directory; `usage` adds a
+  `shared` group with its own ledger, so nothing is counted twice and nothing is
+  attributed to the wrong profile.
+- **`ccprovider init`** adds ccprovider's `PATH` entries to your `~/.zshrc` or bash startup
+  file (`~/.bashrc`; on macOS the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile`
+  that exists, since Terminal and iTerm start login shells), between `# >>> ccprovider path >>>` marker lines that replace themselves on re-run and
+  never touch anything around them. It refuses to edit a shell it does not know or a file
+  it cannot be watched editing: without `-y` or a terminal it prints what it would add and
+  stops. `ccprovider default` now offers the same write at a terminal when it reports that
+  the directory is not in front on `PATH`; non-interactive output is unchanged.
+
+### Fixed
+
+- **A provider session no longer says it has no Bash.** Claude Code defers most tools behind
+  a `ToolSearch` tool, and a third-party model does not use it: with the glm profile as the
+  default `claude`, glm-5.3-flash treated `ToolSearch` as its only tool and answered that it
+  had no shell, with `Bash` in the session's tool list. `use` and `env` now set
+  `ENABLE_TOOL_SEARCH=false` for a provider profile, so every tool's schema is sent up front
+  (a subscription profile is untouched). The cost is a larger first request, most of all with
+  many MCP plugins on. The variable in your shell does not change this; a gateway that does
+  support tool search can opt back in through the `env` block of `settings.json`, which wins
+  over the environment, and `doctor` then warns, as it does for every variable ccprovider sets.
+
 ## [0.2.1] - 2026-10-19
 
 ### Changed
@@ -269,7 +305,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/kilaslab/ccprovider/compare/v0.1.3...v0.1.4

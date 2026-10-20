@@ -167,6 +167,39 @@ describe('buildEnv owns its whole namespace', () => {
   })
 })
 
+describe('config dir', () => {
+  test('is exported for a directory, and left unset for none — even over an inherited one', () => {
+    expect(build(deepseek).CLAUDE_CONFIG_DIR).toBe('/cfg/deepseek')
+    const env = build(deepseek, { configDir: null, baseEnv: base({ CLAUDE_CONFIG_DIR: '/inherited' }) })
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
+  })
+})
+
+describe('tool search', () => {
+  // Regression: Claude Code defers most tools behind a ToolSearch tool, and a third-party
+  // model does not use it. glm-5.3-flash saw ToolSearch as its only tool and answered that
+  // it had no Bash, though Bash was in the session's tool list.
+  const work: Profile = { kind: 'oauth', baseUrl: '', aliases: {}, preset: 'claude' }
+
+  test('a provider profile loads every tool up front', () => {
+    expect(build(deepseek).ENABLE_TOOL_SEARCH).toBe('false')
+  })
+
+  test('an inherited value cannot switch it back on', () => {
+    const env = build(deepseek, { baseEnv: base({ ENABLE_TOOL_SEARCH: 'true' }) })
+    expect(env.ENABLE_TOOL_SEARCH).toBe('false')
+  })
+
+  test('a subscription profile keeps whatever the user chose', () => {
+    expect(build(work, { baseEnv: base({ ENABLE_TOOL_SEARCH: 'auto:5' }) }).ENABLE_TOOL_SEARCH).toBe('auto:5')
+    expect(build(work).ENABLE_TOOL_SEARCH).toBeUndefined()
+  })
+
+  test('`ccprovider env` shows it, so Docker and the Agent SDK get the same session', () => {
+    expect(describeEnv(build(deepseek)).ENABLE_TOOL_SEARCH).toBe('false')
+  })
+})
+
 describe('model selection', () => {
   test('defaults to defaultModel', () => {
     expect(build(deepseek).ANTHROPIC_MODEL).toBe('deepseek-v4-pro[1m]')

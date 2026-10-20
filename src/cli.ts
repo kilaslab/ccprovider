@@ -2,17 +2,20 @@
 import { parseArgs } from 'node:util'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { getPaths, isInside, profileDir } from './paths.js'
 import { loadStore, saveStore, getProfile, validateName, ProfileError } from './profile.js'
 import { reconcileLinks, removeProfileDir } from './configdir.js'
+import { configDirEnv, loadSettings, saveSettings, sessionConfigDir, sharesSessions } from './settings.js'
+import { blockHasDir, detectRcFile, pathBlockLines, upsertManagedBlock } from './shellrc.js'
 import { AGENT_CATALOG, AGENT_SOURCE, installAgents, listInstalled, readExplore, removeAgents, setExplore, syncAgents, type AgentResult } from './agents.js'
 import { buildEnv, describeEnv, findClaude, missingSlots, passThroughNotice, LaunchError } from './launch.js'
 import { detectStore } from './secrets/index.js'
 import { dotenvWarnings, formatEnv, parseEnvFormat, type EnvFormat } from './envformat.js'
 import { addStatusline, compareVersions, inspectStatusline, removeStatusline, runOffer, STATUSLINE_SOURCE } from './statusline.js'
-import { aggregate, ledgerPath, parseSince, prepareLedger, progressPercent, renderUsage, saveLedger, scanProfile, unreadableTotal, type Ledger } from './usage.js'
+import { aggregate, ledgerPath, parseSince, prepareLedger, progressPercent, renderUsage, saveLedger, scanProfile, sharedLedgerPath, unreadableTotal, type Ledger } from './usage.js'
 import { runDoctor, orphanChecks, defaultChecks, statuslineChecks, worstStatus, type Check } from './doctor.js'
 import { claudeRunner, readInstalledMcp, resolveServers, resolveUnwanted, syncMcp } from './mcp.js'
 import { findPreset } from './presets.js'
@@ -50,6 +53,9 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
   ${c.bold('ccprovider agents rm')} <name> <id…>   remove agents (-y also removes ones you edited)
   ${c.bold('ccprovider agents explore')} <name> <haiku|sonnet|opus|model-id|default>
                                       choose the model the Explore subagent runs on
+  ${c.bold('ccprovider settings')} [set shareSessions true|false [profile]]
+                                      share sessions (and --resume) with the plain claude, globally or per profile
+  ${c.bold('ccprovider init')}              put ccprovider's PATH entries into your ~/.zshrc or ~/.bashrc
 
 Options
   -m, --model <tier|id>   opus | sonnet | haiku | opusplan | a provider model ID
@@ -136,6 +142,8 @@ async function main(argv: string[]): Promise<number> {
     case 'doctor': return cmdDoctor(paths, secrets, name ? validateName(name) : undefined)
     case 'env': return cmdEnv(paths, secrets, requireName(name, 'env'), parseEnvFormat(values.format))
     case 'agents': return cmdAgents(paths, positionals.slice(1), values.yes)
+    case 'settings': return cmdSettings(paths, positionals.slice(1))
+    case 'init': return cmdInit(paths, values.yes)
     default:
       console.error(`Unknown command "${cmd}".\n`)
       console.log(USAGE)
@@ -181,7 +189,7 @@ function pathHint(paths: Paths): string[] {
   if (binDirOnPath(paths.binDir, process.env.PATH)) return []
   return [
     c.yellow(`  ${paths.binDir} is not on your PATH, so installed commands will not resolve yet.`),
-    c.dim(`  bash/zsh: export PATH="${paths.binDir}:$PATH"   (add it to your shell profile)`),
+    c.dim(`  bash/zsh: export PATH="${paths.binDir}:$PATH"   (add it to your shell profile — or run \`ccprovider init\`)`),
   ]
 }
 
@@ -191,6 +199,9 @@ function pathHint(paths: Paths): string[] {
 function setupMcp(paths: Paths, name: string, profile: Profile, previous: string[]): string[] {
   const preset = profile.preset ? findPreset(profile.preset) : undefined
   if (!preset?.mcp) return []
+  if (sharesSessions(profile, loadSettings(paths))) {
+    return [c.yellow(`! MCP servers not set up: "${name}" shares its config directory with ~/.claude, so there is nowhere of its own to register them. \`ccprovider settings set shareSessions false ${name}\` first.`)]
+  }
   const enabled = profile.mcp ?? []
   const { region, servers: wanted } = resolveServers(profile, preset)
 
@@ -221,7 +232,10 @@ function setupMcp(paths: Paths, name: string, profile: Profile, previous: string
 
 /** Bring the profile's agents and Explore override in line with the wizard's answer.
  *  Like MCP, a failure here only warns: the profile itself is already saved. */
-async function setupAgents(paths: Paths, name: string, wanted: string[], explore: string | null): Promise<string[]> {
+async function setupAgents(paths: Paths, name: string, profile: Profile, wanted: string[], explore: string | null): Promise<string[]> {
+  if (sharesSessions(profile, loadSettings(paths))) {
+    return [c.yellow(`! agents not installed: "${name}" shares its config directory with ~/.claude, so it has no agents of its own. \`ccprovider settings set shareSessions false ${name}\` first.`)]
+  }
   const dir = profileDir(paths, name)
   const results = [
     ...(await syncAgents(dir, paths.claudeDir, wanted, { cacheDir: paths.cacheDir })),
@@ -246,8 +260,15 @@ async function cmdAgents(paths: Paths, args: string[], yes: boolean): Promise<nu
   const [sub, rawName, ...rest] = AGENT_SUBCOMMANDS.includes(args[0] ?? '') ? args : ['ls', ...args]
   const name = requireName(rawName, `agents ${sub}`)
   const profile = getProfile(loadStore(paths), name)
+  const shared = sharesSessions(profile, loadSettings(paths))
+  // Listing is harmless; changing anything is not — a shared profile has no agents of its own.
+  if (shared && sub !== 'ls' && sub !== 'list') {
+    console.error(c.yellow(`"${name}" shares its config directory with ~/.claude, so it has no agents of its own. \`ccprovider settings set shareSessions false ${name}\` first.`))
+    return 1
+  }
   const dir = profileDir(paths, name)
-  reconcileLinks(dir, paths.claudeDir)
+  // The shared dir is the symlink source itself; linking it to itself is not a thing.
+  if (!shared) reconcileLinks(dir, paths.claudeDir)
 
   let results: AgentResult[]
   switch (sub) {
@@ -287,10 +308,11 @@ async function cmdAgents(paths: Paths, args: string[], yes: boolean): Promise<nu
       return 0
   }
 
-  reconcileLinks(dir, paths.claudeDir)
+  if (!shared) reconcileLinks(dir, paths.claudeDir)
   for (const r of results) console.log(agentLine(r))
   return results.some((r) => r.action === 'failed') ? 1 : 0
 }
+
 
 function printAgents(paths: Paths, name: string, profile: Profile, dir: string): void {
   const installed = new Map(listInstalled(dir).map((a) => [a.id, a]))
@@ -331,10 +353,11 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(result.name, result.apiKey)
   const dir = profileDir(paths, result.name)
-  reconcileLinks(dir, paths.claudeDir)
+  // A profile that shares runs in ~/.claude and never uses this directory.
+  if (!sharesSessions(result.profile, loadSettings(paths))) reconcileLinks(dir, paths.claudeDir)
 
   for (const line of setupMcp(paths, result.name, result.profile, [])) console.log(line)
-  for (const line of await setupAgents(paths, result.name, result.agents, result.explore)) console.log(line)
+  for (const line of await setupAgents(paths, result.name, result.profile, result.agents, result.explore)) console.log(line)
   for (const line of await offerStatusline(paths, statusline)) console.log(line)
   const installed = install ? installCommand(paths, result.name, { automatic: true }) : null
   if (installed) {
@@ -367,12 +390,17 @@ async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: bo
   const result = await runWizard(paths, { name, profile, apiKey }, [], refresh)
   // Only `add` can be redirected to an edit; editing never asks for a name.
   if ('editInstead' in result) return 1
-  store.providers[name] = result.profile
+  // The wizard does not ask about sharing; dropping the field here would quietly
+  // re-isolate the profile and strand the sessions it made while it shared.
+  const updated = { ...result.profile, shareSessions: profile.shareSessions }
+  store.providers[name] = updated
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(name, result.apiKey)
-  reconcileLinks(profileDir(paths, name), paths.claudeDir)
-  for (const line of setupMcp(paths, name, result.profile, profile.mcp ?? [])) console.log(line)
-  for (const line of await setupAgents(paths, name, result.agents, result.explore)) console.log(line)
+  const shared = sharesSessions(updated, loadSettings(paths))
+  // The shared dir is the symlink source itself; linking it to itself is not a thing.
+  if (!shared) reconcileLinks(profileDir(paths, name), paths.claudeDir)
+  for (const line of setupMcp(paths, name, updated, profile.mcp ?? [])) console.log(line)
+  for (const line of await setupAgents(paths, name, updated, result.agents, result.explore)) console.log(line)
   p.outro('Updated.')
   return 0
 }
@@ -431,7 +459,8 @@ async function cmdInstall(paths: Paths, name: string | undefined): Promise<numbe
 }
 
 /** What is still between the user and the wrapper. Like `pathHint`, it is about a directory
- *  and not for one command, and it only ever prints: nothing here edits a shell profile. */
+ *  and not for one command, and it only ever prints: the thing that edits a shell profile is
+ *  `ccprovider init`, which writes between its marker lines and only when asked. */
 function defaultPathHint(paths: Paths, s: DefaultShimStatus): string[] {
   if (s.dirOnPath && !s.shadowedBy) return []
   const why = s.shadowedBy
@@ -439,8 +468,43 @@ function defaultPathHint(paths: Paths, s: DefaultShimStatus): string[] {
     : `${paths.defaultBinDir} is not on your PATH, so typing \`claude\` does not reach it yet.`
   return [
     c.yellow(`  ! ${why}`),
-    c.dim(`    Put the directory before it:  export PATH="${paths.defaultBinDir}:$PATH"   (add it to your shell profile)`),
+    c.dim(`    Put the directory before it:  export PATH="${paths.defaultBinDir}:$PATH"   (or run \`ccprovider init\`)`),
   ]
+}
+
+/** What the PATH block holds. The launchers directory is in it when it is off PATH, and also
+ *  when this file's block already has it: the block is what put it on PATH, so deciding from
+ *  PATH alone dropped it on every second run. */
+function blockLines(paths: Paths, file: string | null): string[] {
+  const bin = !binDirOnPath(paths.binDir, process.env.PATH) || (file !== null && blockHasDir(file, paths.binDir))
+  return pathBlockLines(paths.defaultBinDir, bin ? paths.binDir : null)
+}
+
+/** Write ccprovider's PATH block into `file`, between its marker lines, and say what happened. */
+function writeRcBlock(paths: Paths, file: string): void {
+  let r: ReturnType<typeof upsertManagedBlock>
+  try {
+    r = upsertManagedBlock(file, blockLines(paths, file))
+  } catch (e) {
+    throw new ProfileError(`Could not update ${file}: ${(e as Error).message}`)
+  }
+  console.log(
+    r === 'created' ? `${c.green('✓')} created ${file} with ccprovider's PATH block`
+    : r === 'updated' ? `${c.green('✓')} updated ccprovider's PATH block in ${file}`
+    : `${c.green('✓')} ${file} is already up to date`,
+  )
+  console.log(c.dim(`  Open a new shell, or run:  export PATH="${paths.defaultBinDir}:$PATH"`))
+}
+
+/** Offered where a person has just been told their shell cannot reach the wrapper: only at a
+ *  terminal, only into an rc file of a shell this tool knows, always between marker lines. */
+async function offerRcWrite(paths: Paths, lines: string[]): Promise<void> {
+  if (!lines.length || !process.stdin.isTTY) return
+  const rc = detectRcFile(process.env, homedir())
+  if (!rc) return
+  const ok = await p.confirm({ message: `Add ccprovider's PATH block to ${rc.file} now?`, initialValue: false })
+  if (p.isCancel(ok) || !ok) return
+  writeRcBlock(paths, rc.file)
 }
 
 async function cmdDefault(paths: Paths, name: string | undefined, off: boolean): Promise<number> {
@@ -474,15 +538,128 @@ async function cmdDefault(paths: Paths, name: string | undefined, off: boolean):
     if (!Object.hasOwn(loadStore(paths).providers, s.profile!)) {
       console.log(c.yellow(`  ! There is no "${s.profile}" profile any more. \`ccprovider default --off\` removes the wrapper.`))
     }
-    for (const line of defaultPathHint(paths, s)) console.log(line)
+    const hint = defaultPathHint(paths, s)
+    for (const line of hint) console.log(line)
+    await offerRcWrite(paths, hint)
     return 0
   }
 
   getProfile(loadStore(paths), name)
   const r = installDefaultShim(paths, name, selfLauncher())
   console.log(`${c.green('✓')} \`claude\` now runs the "${name}" profile  ${c.dim(r.path)}${r.action === 'unchanged' ? c.dim('  (it already did)') : ''}`)
-  for (const line of defaultPathHint(paths, inspectDefaultShim(paths))) console.log(line)
+  const hint = defaultPathHint(paths, inspectDefaultShim(paths))
+  for (const line of hint) console.log(line)
+  await offerRcWrite(paths, hint)
   return 0
+}
+
+/** `ccprovider init` — put ccprovider's PATH entries into the shell's rc file, between marker
+ *  lines, so the default `claude` and the installed commands actually resolve. The one command
+ *  that edits a shell profile, and never without an explicit -y or an answer at a terminal. */
+async function cmdInit(paths: Paths, yes: boolean): Promise<number> {
+  const rc = detectRcFile(process.env, homedir())
+  const lines = blockLines(paths, rc?.file ?? null)
+  if (!rc) {
+    for (const line of lines) console.log(`  ${line}`)
+    console.log(c.dim('  Add that to your shell startup file yourself — `init` only writes the startup file of zsh or bash.'))
+    return 1
+  }
+  if (!yes) {
+    if (!process.stdin.isTTY) {
+      // A shell startup file is never rewritten unattended: say what would happen, then stop.
+      console.log(`Would add to ${rc.file}:`)
+      for (const line of lines) console.log(`    ${line}`)
+      console.error(c.dim('  Run `ccprovider init -y` to let it, or run it from a terminal to be asked.'))
+      return 1
+    }
+    const ok = await p.confirm({ message: `Add ccprovider's PATH block to ${rc.file}?`, initialValue: true })
+    if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }
+  }
+  writeRcBlock(paths, rc.file)
+  return 0
+}
+
+/** `ccprovider settings` — install-wide settings with per-profile overrides. A bare run shows
+ *  how every profile resolves; `set` changes the global file or one profile's override;
+ *  `unset` drops an override so the profile inherits again. */
+async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
+  const [sub, key, value, profileName] = args
+  if (!sub) {
+    const store = loadStore(paths)
+    const settings = loadSettings(paths)
+    console.log(`${c.bold('settings')}  ${c.dim(paths.settingsFile)}`)
+    console.log(`  shareSessions  ${c.bold(String(settings.shareSessions))}  ${c.dim('(global default)')}`)
+    for (const [n, pr] of Object.entries(store.providers)) {
+      const line =
+        isOauth(pr) ? c.dim('never shares — a Claude subscription keeps its login in its own directory')
+        : pr.shareSessions === undefined ? (settings.shareSessions ? c.dim('inherits — shares with ~/.claude') : c.dim('inherits — isolated'))
+        : pr.shareSessions ? `shares with ~/.claude  ${c.dim('(own override)')}`
+        : c.dim('isolated  (own override)')
+      console.log(`  ${c.bold(n.padEnd(14))} ${line}`)
+    }
+    return 0
+  }
+
+  if (sub === 'set') {
+    if (args.length > 4) { console.error('Too many arguments: settings set shareSessions true|false [profile]'); return 1 }
+    if (key !== 'shareSessions') {
+      console.error(key === undefined ? `\`ccprovider settings set\` needs a setting and a value: settings set shareSessions true|false [profile]` : `Unknown setting "${key}". "shareSessions" is the only one.`)
+      return 1
+    }
+    if (value !== 'true' && value !== 'false') {
+      console.error(`shareSessions takes true or false, not "${value ?? ''}".`)
+      return 1
+    }
+    if (profileName) {
+      const name = validateName(profileName)
+      const store = loadStore(paths)
+      const profile = getProfile(store, name)
+      if (isOauth(profile)) {
+        console.error(c.red(`"${name}" is a Claude subscription profile: its login lives in its own config directory, so it cannot share sessions.`))
+        return 1
+      }
+      if (value === 'true') {
+        console.log(c.dim(`  Sessions "${name}" already has stay in ${profileDir(paths, name)} — they will not show up in \`claude --resume\` from the shared directory, and \`ccprovider usage ${name}\` still reports them.`))
+        console.log(c.dim('  Per-profile agents and MCP servers are unavailable while it shares.'))
+      }
+      store.providers[name] = { ...profile, shareSessions: value === 'true' }
+      saveStore(paths, store)
+      console.log(value === 'true' ? `${c.green('✓')} "${name}" now shares sessions with ~/.claude` : `${c.green('✓')} "${name}" has its own sessions again`)
+      return 0
+    }
+    const settings = loadSettings(paths)
+    saveSettings(paths, { version: 1, shareSessions: value === 'true' })
+    console.log(`${c.green('✓')} shareSessions is now ${value} for profiles without an override of their own`)
+    if (!settings.shareSessions && value === 'true') {
+      const store = loadStore(paths)
+      if (Object.keys(store.providers).some((n) => !isOauth(store.providers[n]!))) {
+        console.log(c.dim('  Each profile keeps the sessions it already has; what it starts from now on runs in ~/.claude.'))
+      }
+    }
+    return 0
+  }
+
+  if (sub === 'unset') {
+    if (args.length > 3) { console.error('Too many arguments: settings unset shareSessions <profile>'); return 1 }
+    if (key !== 'shareSessions' || !value) {
+      console.error('Usage: ccprovider settings unset shareSessions <profile> — the global value is never unset; set it to false.')
+      return 1
+    }
+    const name = validateName(value)
+    const store = loadStore(paths)
+    const profile = getProfile(store, name)
+    if (profile.shareSessions === undefined) {
+      console.log(`"${name}" has no override of its own; it follows the global setting.`)
+      return 0
+    }
+    delete profile.shareSessions
+    saveStore(paths, store)
+    console.log(`${c.green('✓')} "${name}" follows the global setting again`)
+    return 0
+  }
+
+  console.error(`Unknown settings command "${sub}". Use: settings, settings set shareSessions true|false [profile], settings unset shareSessions <profile>`)
+  return 1
 }
 
 /** The token footer is install-wide: statusLine lives in settings.json, which every profile
@@ -606,11 +783,23 @@ async function cmdUsage(paths: Paths, name: string | undefined, flags: UsageFlag
   let unreadable = 0
   let skipped = 0
 
-  for (const n of names) {
-    const path = ledgerPath(paths, n)
+  // One scan per profile of its own directory — a profile that shares keeps its older
+  // sessions there — plus, when any selected profile shares, one scan of the real config
+  // dir under the name `shared`. The trees are disjoint, so nothing is counted twice, and
+  // the shared pass is never attributed to a profile: transcripts do not name one.
+  const settings = loadSettings(paths)
+  const scans: Array<{ label: string; dir: string; path: string }> = names.map((n) => ({ label: n, dir: profileDir(paths, n), path: ledgerPath(paths, n) }))
+  // Called `shared` unless a profile already is, which would otherwise take its place in the report.
+  const sharedLabel = names.includes('shared') ? 'shared (~/.claude)' : 'shared'
+  if (names.some((n) => sharesSessions(store.providers[n]!, settings))) {
+    scans.push({ label: sharedLabel, dir: paths.claudeDir, path: sharedLedgerPath(paths, paths.claudeDir) })
+  }
+
+  for (const scan of scans) {
+    const path = scan.path
     // What guards the history in the ledger (set aside what cannot be read, keep the backup
     // that holds more) is decided in usage.ts, where it is tested.
-    const { ledger, notes, readOnly } = prepareLedger(paths, n, { rebuild: flags.rebuild })
+    const { ledger, notes, readOnly } = prepareLedger(paths, scan.label, { rebuild: flags.rebuild }, path)
     for (const note of notes) console.error(note.warn ? c.yellow(`! ${note.text}`) : c.dim(note.text))
     const save = () => {
       if (readOnly) return // a ledger from a newer ccprovider is not ours to write
@@ -622,26 +811,26 @@ async function cmdUsage(paths: Paths, name: string | undefined, flags: UsageFlag
     let lastTick = 0
     let r: Awaited<ReturnType<typeof scanProfile>> | undefined
     try {
-      r = await scanProfile(profileDir(paths, n), ledger, {
+      r = await scanProfile(scan.dir, ledger, {
         onProgress: (done, total) => {
           if (!watched || total < 32 << 20) return
-          if (!ui.spin) { ui.spin = p.spinner(); ui.spin.start(`Reading ${n}'s transcripts`) }
+          if (!ui.spin) { ui.spin = p.spinner(); ui.spin.start(`Reading ${scan.label}'s transcripts`) }
           const now = Date.now()
           if (now - lastTick < 200) return
           lastTick = now
-          ui.spin.message(`Reading ${n}'s transcripts: ${progressPercent(done, total)}% of ${mb(total)}`)
+          ui.spin.message(`Reading ${scan.label}'s transcripts: ${progressPercent(done, total)}% of ${mb(total)}`)
         },
         // A scan of gigabytes that is interrupted keeps what it has read.
         onCheckpoint: save,
       })
     } finally {
       // Also when the scan or a checkpoint throws: a spinner left running garbles the error.
-      ui.spin?.stop(r ? `Read ${mb(r.bytesRead)} of ${n}'s transcripts` : `Stopped reading ${n}'s transcripts`)
+      ui.spin?.stop(r ? `Read ${mb(r.bytesRead)} of ${scan.label}'s transcripts` : `Stopped reading ${scan.label}'s transcripts`)
     }
     if (r.filesRead > 0 || flags.rebuild) save()
     unreadable += unreadableTotal(ledger)
     skipped += r.skippedFiles
-    ledgers[n] = ledger
+    ledgers[scan.label] = ledger
   }
 
   const rows = aggregate(ledgers, { since, by: flags.by === 'day' ? 'day' : undefined })
@@ -657,6 +846,9 @@ async function cmdUsage(paths: Paths, name: string | undefined, flags: UsageFlag
   console.log(renderUsage(rows, { subscription, color }))
   if (rows.length) {
     console.log(dim('\nFrom the transcripts Claude Code keeps in each profile, not the provider\'s bill. A dash means the provider did not report cache.'))
+    if (ledgers.shared) {
+      console.log(dim(`"${sharedLabel}" is everything that ran in ${paths.claudeDir}: the profiles that share it and the plain claude alike — a transcript never names the profile that wrote it.`))
+    }
   }
   if (skipped) console.log(dim(`${skipped} transcript${skipped === 1 ? '' : 's'} could not be opened (deleted or locked meanwhile) and will be tried again next time.`))
   if (unreadable) console.log(dim(`${unreadable} line${unreadable === 1 ? '' : 's'} that looked like a call could not be read and were skipped.`))
@@ -704,6 +896,7 @@ async function cmdUninstall(paths: Paths, name: string | undefined, yes: boolean
 
 async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>): Promise<number> {
   const store = loadStore(paths)
+  const settings = loadSettings(paths)
   const names = Object.keys(store.providers)
   if (!names.length) {
     console.log('No profiles yet. Run `ccprovider add` to create one.')
@@ -727,6 +920,9 @@ async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retu
     const flag = !hasKey ? c.red('no key') : missing.length ? c.yellow(`unmapped: ${missing.join(',')}`) : c.green('ready')
     console.log(`${c.bold(n.padEnd(14))} ${flag}`)
     console.log(`  ${c.dim(pr.baseUrl)}`)
+    if (sharesSessions(pr, settings)) {
+      console.log(c.dim(`shared with ${paths.claudeDir} — sessions, todos and credentials are the plain claude's`))
+    }
     const shim = inspectShim(paths, n)
     console.log(
       shim.state === 'ours' ? `  ${c.dim('command')} ${c.green(n)}`
@@ -781,13 +977,19 @@ async function cmdUse(
     )
   }
 
-  const dir = profileDir(paths, name)
-  const results = reconcileLinks(dir, paths.claudeDir)
-  for (const r of results) {
-    if (r.action === 'skipped-real') console.error(c.yellow(`warning: ${r.detail} — not shared with ~/.claude`))
+  const settings = loadSettings(paths)
+  const shared = sharesSessions(profile, settings)
+  const dir = sessionConfigDir(paths, name, profile, settings)
+  // A shared profile runs in the real config dir — the symlink source itself — so there is
+  // nothing to reconcile and nothing of its own to warn about.
+  if (!shared) {
+    const results = reconcileLinks(dir, paths.claudeDir)
+    for (const r of results) {
+      if (r.action === 'skipped-real') console.error(c.yellow(`warning: ${r.detail} — not shared with ~/.claude`))
+    }
   }
 
-  const env = buildEnv({ profile, configDir: dir, apiKey, model, baseEnv: process.env })
+  const env = buildEnv({ profile, configDir: configDirEnv(paths, dir, process.env), apiKey, model, baseEnv: process.env })
   // Marks the session, so a default wrapper run inside it knows it is inside one.
   env.CCPROVIDER_SESSION = '1'
   return launchClaude(findClaude(env, [paths.defaultBinDir]), passthrough, env)
@@ -869,7 +1071,7 @@ async function cmdDoctor(
   for (const n of names) {
     const profile = getProfile(store, n)
     console.log(`\n${c.bold(n)}  ${c.dim(isOauth(profile) ? 'Claude subscription' : profile.baseUrl)}`)
-    const checks = await runDoctor(n, profile, paths, secrets)
+    const checks = await runDoctor(n, profile, paths, secrets, { shared: sharesSessions(profile, loadSettings(paths)) })
     for (const check of checks) render(check)
     const s = worstStatus(checks)
     if (s === 'fail') worst = 'fail'
@@ -917,7 +1119,8 @@ async function cmdEnv(
   }
   const apiKey = isOauth(profile) ? '' : await secrets.get(name)
   if (apiKey === null || (!apiKey && !isOauth(profile))) { console.error(`No API key stored for "${name}".`); return 1 }
-  const env = buildEnv({ profile, configDir: profileDir(paths, name), apiKey, model: null, baseEnv: {} })
+  const dir = sessionConfigDir(paths, name, profile, loadSettings(paths))
+  const env = buildEnv({ profile, configDir: configDirEnv(paths, dir, process.env), apiKey, model: null, baseEnv: {} })
   // Redacted when a human is looking; real values when piped into `eval` or a file.
   const shown = process.stdout.isTTY ? describeEnv(env) : env
   process.stdout.write(formatEnv(shown, format))

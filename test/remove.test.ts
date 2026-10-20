@@ -21,6 +21,7 @@ beforeEach(async () => {
   paths = {
     claudeDir: join(home, '.claude'),
     configFile: join(home, '.config/ccprovider/providers.json'),
+    settingsFile: join(home, '.config/ccprovider/settings.json'),
     dirsRoot: join(home, '.local/share/ccprovider/dirs'),
     cacheDir: join(home, '.cache/ccprovider'),
     binDir: join(home, 'bin'),

@@ -51,6 +51,11 @@ export interface Profile {
    *  themselves are derived from the preset at sync time and live in the profile's
    *  own Claude config — only the choice is stored here. */
   mcp?: string[]
+  /** Run this profile's sessions in the user's real Claude config dir instead of its own:
+   *  sessions, `--resume` history, todos and credentials are shared with the plain `claude`.
+   *  Absent means "inherit the global setting" (see settings.ts). Never set on an oauth
+   *  profile — its login lives in its own config dir and validation refuses the field. */
+  shareSessions?: boolean
   createdAt?: string
 }
 

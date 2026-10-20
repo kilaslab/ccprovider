@@ -5,6 +5,8 @@ export interface Paths {
   /** The user's real Claude Code config dir — the symlink source. */
   claudeDir: string
   configFile: string
+  /** Install-wide settings, beside providers.json. */
+  settingsFile: string
   dirsRoot: string
   cacheDir: string
   /** Where per-profile launcher commands are installed. Must be on the user's PATH
@@ -30,21 +32,25 @@ export function isInside(child: string, parent: string): boolean {
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep)
 }
 
+/** The config dir the user declared in CLAUDE_CONFIG_DIR, or null when they did not — an
+ *  unset variable, or one inside a session this tool launched, which names a profile dir. */
+export function declaredClaudeDir(env: NodeJS.ProcessEnv, dirsRoot: string): string | null {
+  const declared = env.CLAUDE_CONFIG_DIR
+  return declared && declared.startsWith('/') && !isInside(declared, dirsRoot) ? declared : null
+}
+
 export function getPaths(env: NodeJS.ProcessEnv = process.env, home = homedir()): Paths {
   const dirsRoot = join(xdg(env, 'XDG_DATA_HOME', '.local/share', home), 'ccprovider', 'dirs')
 
   // CLAUDE_CONFIG_DIR normally points at the user's real config. But inside a session
   // *we* launched it points at a profile dir — linking a profile to a profile would
   // nest state and eventually lose it. Fall back to ~/.claude in that case.
-  const declared = env.CLAUDE_CONFIG_DIR
-  const claudeDir =
-    declared && declared.startsWith('/') && !isInside(declared, dirsRoot)
-      ? declared
-      : join(home, '.claude')
+  const claudeDir = declaredClaudeDir(env, dirsRoot) ?? join(home, '.claude')
 
   return {
     claudeDir,
     configFile: join(xdg(env, 'XDG_CONFIG_HOME', '.config', home), 'ccprovider', 'providers.json'),
+    settingsFile: join(xdg(env, 'XDG_CONFIG_HOME', '.config', home), 'ccprovider', 'settings.json'),
     dirsRoot,
     cacheDir: join(xdg(env, 'XDG_CACHE_HOME', '.cache', home), 'ccprovider'),
     // ~/.local/bin is where Claude Code itself installs `claude`, so it is already on
