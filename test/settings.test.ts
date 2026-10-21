@@ -156,7 +156,7 @@ describe('shareOverride', () => {
     expect(shareOverride(false, false, off)).toBe(false)
   })
 
-  // The case that pinned a profile for good: Yes to share, later No, with the default off.
+  // Regression: Yes to share, later No, with the default off, pinned the profile to false for good.
   test('flipping an override back to the default drops it, so the profile follows the default again', () => {
     expect(shareOverride(false, true, off)).toBeUndefined()
     expect(shareOverride(true, false, on)).toBeUndefined()

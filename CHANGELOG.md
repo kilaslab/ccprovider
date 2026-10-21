@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 ### Added
 
 - **`add` and `edit` ask whether the profile shares its chat sessions** with the plain
@@ -326,7 +328,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...v0.2.0
