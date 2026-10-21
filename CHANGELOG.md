@@ -21,9 +21,11 @@ All notable changes are recorded here. The format follows
   profile with what each resolves to; pick one to change it, and each change is saved as it is
   made. Piped, it prints the same list and now ends with the command to change it. `settings
   set` and `settings unset` work as before for scripts, and now say so when the value was
-  already set. `settings unset` on a Claude subscription profile is refused, like `set`.
+  already set. The hint line goes to stderr, so a script reading the list gets only the list.
 - `edit` no longer copies a profile's sharing override over whatever the wizard decided: the
-  wizard owns it now.
+  wizard owns it now. Answering so a profile lands back on the default (Yes to share, later No,
+  with the default off) drops its override, so it follows the default again.
+- `settings set shareSessions true ""` is refused instead of changing the global default.
 
 ## [0.3.0] - 2026-10-20
 

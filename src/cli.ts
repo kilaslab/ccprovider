@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { getPaths, isInside, profileDir } from './paths.js'
 import { loadStore, saveStore, getProfile, validateName, ProfileError } from './profile.js'
 import { reconcileLinks, removeProfileDir } from './configdir.js'
-import { applyGlobalShare, applyProfileShare, configDirEnv, describeShare, loadSettings, sessionConfigDir, sharesSessions, sharingOnNotes, type ShareChange } from './settings.js'
+import { applyGlobalShare, applyProfileShare, configDirEnv, describeShare, loadSettings, sessionConfigDir, sessionsStayNote, sharesSessions, type ShareChange } from './settings.js'
 import { blockHasDir, detectRcFile, pathBlockLines, upsertManagedBlock } from './shellrc.js'
 import { AGENT_CATALOG, AGENT_SOURCE, installAgents, listInstalled, readExplore, removeAgents, setExplore, syncAgents, type AgentResult } from './agents.js'
 import { buildEnv, describeEnv, findClaude, missingSlots, passThroughNotice, LaunchError } from './launch.js'
@@ -276,7 +276,7 @@ async function cmdAgents(paths: Paths, args: string[], yes: boolean): Promise<nu
   const shared = sharesSessions(profile, loadSettings(paths))
   // Listing is harmless; changing anything is not — a shared profile has no agents of its own.
   if (shared && sub !== 'ls' && sub !== 'list') {
-    console.error(c.yellow(`"${name}" shares its config directory with ~/.claude, so it has no agents of its own. \`ccprovider settings set shareSessions false ${name}\` first.`))
+    console.error(c.yellow(`"${name}" shares its config directory with ~/.claude, so it has no agents of its own. Run \`ccprovider settings\` (or \`ccprovider settings set shareSessions false ${name}\`) first.`))
     return 1
   }
   const dir = profileDir(paths, name)
@@ -412,7 +412,7 @@ async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: bo
   if (!shared) reconcileLinks(profileDir(paths, name), paths.claudeDir)
   for (const line of await setupOwnConfig(paths, name, updated, result, profile.mcp ?? [])) console.log(line)
   // Said once, here, because the sessions it already has are the surprise: they stay behind.
-  if (shared && !sharesSessions(profile, settings)) console.log(c.dim(`  ${sharingOnNotes(paths, name)[0]}`))
+  if (shared && !sharesSessions(profile, settings)) console.log(c.dim(`  ${sessionsStayNote(paths, name)}`))
   p.outro('Updated.')
   return 0
 }
@@ -611,8 +611,8 @@ async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
       // An override is the part worth noticing; "inherits" and "never" are the quiet defaults.
       console.log(`  ${c.bold(n.padEnd(14))} ${isOauth(pr) || pr.shareSessions === undefined ? c.dim(line) : line}`)
     }
-    console.log()
-    console.log(c.dim('  change: run `ccprovider settings` in a terminal, or `ccprovider settings set shareSessions true|false [profile]`'))
+    // On stderr, so a script that reads the list from stdout gets the list and nothing else.
+    console.error(c.dim('\n  change: run `ccprovider settings` in a terminal, or `ccprovider settings set shareSessions true|false [profile]`'))
     return 0
   }
 
@@ -631,7 +631,7 @@ async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
       console.error(`shareSessions takes true or false, not "${value ?? ''}".`)
       return 1
     }
-    report(profileName ? applyProfileShare(paths, profileName, value === 'true') : applyGlobalShare(paths, value === 'true'))
+    report(profileName !== undefined ? applyProfileShare(paths, profileName, value === 'true') : applyGlobalShare(paths, value === 'true'))
     return 0
   }
 

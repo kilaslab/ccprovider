@@ -195,7 +195,7 @@ export async function runWizard(
   const settings = loadSettings(paths)
   const shares = orCancel(
     await p.confirm({
-      message: 'Share chat sessions with the plain claude?  (--resume sees them; no agents or MCP servers of its own)',
+      message: 'Share chat sessions with the plain claude?  (no agents or MCP servers of its own)',
       initialValue: existing ? sharesSessions(existing.profile, settings) : settings.shareSessions,
     }),
   )
@@ -204,7 +204,9 @@ export async function runWizard(
   // None of it is asked while the profile shares: the caller installs nothing then, so what
   // the profile has now is handed back as it was.
   const dir = profileDir(paths, name)
-  const installedAgents = existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : null
+  const ownAgents = existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : []
+  // A profile that shared has no agents of its own to start from: offer the recommended set, as for a new one.
+  const installedAgents = existing && (ownAgents.length || !sharesSessions(existing.profile, settings)) ? ownAgents : null
   const currentExplore = existing ? (readExplore(dir)?.model ?? null) : null
   const mcp = shares ? existing?.profile.mcp : await chooseMcp(preset, baseUrl, existing?.profile)
   const agents = shares ? (installedAgents ?? []) : await chooseAgents(installedAgents)

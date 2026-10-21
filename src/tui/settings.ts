@@ -80,6 +80,7 @@ export async function runSettingsMenu(paths: Paths): Promise<number> {
 }
 
 function show(r: ShareChange): void {
-  p.log.success(r.done)
+  if (r.changed) p.log.success(r.done)
+  else p.log.info(r.done)
   for (const note of r.notes) p.log.info(note)
 }

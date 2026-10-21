@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -10,6 +10,7 @@ import {
   loadSettings,
   saveSettings,
   sessionConfigDir,
+  sessionsStayNote,
   shareOverride,
   sharesSessions,
   sharingOnNotes,
@@ -147,10 +148,29 @@ describe('shareOverride', () => {
     expect(shareOverride(false, undefined, on)).toBe(false)
   })
 
-  test('a profile that already has an override keeps one, set to the answer', () => {
+  test('re-confirming what the profile has leaves it alone, a deliberate override included', () => {
     expect(shareOverride(true, true, off)).toBe(true)
-    expect(shareOverride(false, true, off)).toBe(false)
-    expect(shareOverride(true, false, on)).toBe(true)
+    expect(shareOverride(false, false, on)).toBe(false)
+    // Same answer as the default, and the pin was a choice: kept, not quietly dropped.
+    expect(shareOverride(true, true, on)).toBe(true)
+    expect(shareOverride(false, false, off)).toBe(false)
+  })
+
+  // The case that pinned a profile for good: Yes to share, later No, with the default off.
+  test('flipping an override back to the default drops it, so the profile follows the default again', () => {
+    expect(shareOverride(false, true, off)).toBeUndefined()
+    expect(shareOverride(true, false, on)).toBeUndefined()
+  })
+
+  test('flipping an override away from the default pins the new answer', () => {
+    expect(shareOverride(false, true, on)).toBe(false)
+    expect(shareOverride(true, false, off)).toBe(true)
+  })
+
+  test('a profile that follows the default and is moved off it gets an override, then loses it again', () => {
+    const first = shareOverride(true, undefined, off)
+    expect(first).toBe(true)
+    expect(shareOverride(false, first, off)).toBeUndefined()
   })
 })
 
@@ -178,6 +198,7 @@ describe('applyProfileShare', () => {
     expect(r.changed).toBe(true)
     expect(r.done).toBe('"glm" now shares sessions with ~/.claude')
     expect(r.notes).toEqual(sharingOnNotes(paths, 'glm'))
+    expect(r.notes[0]).toBe(sessionsStayNote(paths, 'glm'))
     expect(r.notes.join(' ')).toContain(profileDir(paths, 'glm'))
   })
 
@@ -213,10 +234,46 @@ describe('applyProfileShare', () => {
     expect(applyProfileShare(paths, 'glm', undefined).notes).toEqual(sharingOnNotes(paths, 'glm'))
   })
 
-  test('refuses a subscription profile, and leaves the store alone', () => {
+  test('refuses to make a subscription profile share, and leaves the store alone', () => {
     store({ work: oauth })
     expect(() => applyProfileShare(paths, 'work', true)).toThrow(ProfileError)
+    expect(() => applyProfileShare(paths, 'work', false)).toThrow(ProfileError)
     expect(onDisk('work')).not.toHaveProperty('shareSessions')
+  })
+
+  // A script that loops `unset` over every profile must not fail on the subscription one.
+  test('dropping the override of a subscription profile is a no-op, not an error', () => {
+    store({ work: oauth })
+    const r = applyProfileShare(paths, 'work', undefined)
+    expect(r.changed).toBe(false)
+    expect(r.done).toContain('never shares')
+  })
+
+  test('a name is matched the way every other command matches it', () => {
+    store({ glm: profile() })
+    expect(applyProfileShare(paths, 'GLM', true).done).toContain('"glm"')
+    expect(loadStore(paths).providers.glm!.shareSessions).toBe(true)
+  })
+
+  test('an unknown profile is an error that names the ones there are', () => {
+    store({ glm: profile() })
+    expect(() => applyProfileShare(paths, 'nope', true)).toThrow(/No profile named "nope".*glm/)
+  })
+
+  // `constructor` is a valid name and an inherited property of every object.
+  test('a profile called constructor is not confused with the object’s own', () => {
+    store({ glm: profile() })
+    expect(() => applyProfileShare(paths, 'constructor', true)).toThrow(ProfileError)
+    store({ constructor: profile() })
+    expect(applyProfileShare(paths, 'constructor', true).changed).toBe(true)
+    expect(onDisk('constructor').shareSessions).toBe(true)
+  })
+
+  test('asking for what is already true writes nothing', () => {
+    store({ glm: profile({ shareSessions: true }) })
+    const before = readFileSync(paths.configFile, 'utf8')
+    expect(applyProfileShare(paths, 'glm', true).changed).toBe(false)
+    expect(readFileSync(paths.configFile, 'utf8')).toBe(before)
   })
 })
 
@@ -235,6 +292,13 @@ describe('applyGlobalShare', () => {
     saveSettings(paths, off)
     saveStore(paths, { version: 1, providers: { work: oauth } })
     expect(applyGlobalShare(paths, true).notes).toEqual([])
+  })
+
+  test('leaving it as it was writes nothing and says so', () => {
+    const r = applyGlobalShare(paths, false)
+    expect(r.changed).toBe(false)
+    expect(r.done).toContain('already false')
+    expect(existsSync(paths.settingsFile)).toBe(false)
   })
 
   test('turning it off, or leaving it as it was, has no notes', () => {

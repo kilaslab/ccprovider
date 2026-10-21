@@ -559,7 +559,22 @@ describe('settings', () => {
     const r = run('settings', 'set', 'shareSessions', 'true', 'work')
     expect(r.status).toBe(1)
     expect(r.out).toContain('login')
-    expect(run('settings', 'unset', 'shareSessions', 'work').status).toBe(1)
+    // Nothing to drop, and a loop over every profile must not stop here.
+    expect(run('settings', 'unset', 'shareSessions', 'work').status).toBe(0)
+  })
+
+  // An empty "$PROFILE" in a script is not "no profile": it must not change every profile's default.
+  test('an empty profile name is refused, not read as the global setting', () => {
+    expect(run('settings', 'set', 'shareSessions', 'true', '').status).toBe(1)
+    expect(existsSync(join(home, 'config', 'ccprovider', 'settings.json'))).toBe(false)
+  })
+
+  test('the hint for changing a setting goes to stderr, so stdout stays the list', () => {
+    const r = spawnSync(process.execPath, [CLI, 'settings'], { env, encoding: 'utf8' })
+    const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, '')
+    expect(plain(r.stdout)).toContain('shareSessions  false')
+    expect(plain(r.stdout)).not.toContain('change:')
+    expect(plain(r.stderr)).toContain('change:')
   })
 
   test('setting what is already set says so instead of announcing a change', () => {
