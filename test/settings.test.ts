@@ -1,9 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { configDirEnv, loadSettings, saveSettings, sessionConfigDir, sharesSessions, validateSettings, type Settings } from '../src/settings.js'
-import { validateProfile, ProfileError } from '../src/profile.js'
+import {
+  applyGlobalShare,
+  applyProfileShare,
+  configDirEnv,
+  describeShare,
+  loadSettings,
+  saveSettings,
+  sessionConfigDir,
+  shareOverride,
+  sharesSessions,
+  sharingOnNotes,
+  validateSettings,
+  type Settings,
+} from '../src/settings.js'
+import { validateProfile, loadStore, saveStore, ProfileError } from '../src/profile.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import type { Profile } from '../src/types.js'
 
@@ -117,5 +130,117 @@ describe('configDirEnv', () => {
 
   test('a profile directory inherited from a parent session is not a declaration', () => {
     expect(configDirEnv(paths, paths.claudeDir, { CLAUDE_CONFIG_DIR: profileDir(paths, 'pclaude') })).toBeNull()
+  })
+})
+
+// What the wizard stores for its "share chat sessions?" answer. Asked on every add and edit, so
+// an answer that only repeats the default must not turn into a pin: flipping the global
+// setting later would then skip that profile without anyone having chosen it.
+describe('shareOverride', () => {
+  test('an answer that matches the default is not stored for a profile with no override', () => {
+    expect(shareOverride(false, undefined, off)).toBeUndefined()
+    expect(shareOverride(true, undefined, on)).toBeUndefined()
+  })
+
+  test('an answer that differs from the default becomes the profile’s own override', () => {
+    expect(shareOverride(true, undefined, off)).toBe(true)
+    expect(shareOverride(false, undefined, on)).toBe(false)
+  })
+
+  test('a profile that already has an override keeps one, set to the answer', () => {
+    expect(shareOverride(true, true, off)).toBe(true)
+    expect(shareOverride(false, true, off)).toBe(false)
+    expect(shareOverride(true, false, on)).toBe(true)
+  })
+})
+
+describe('describeShare', () => {
+  test.each([
+    ['an oauth profile', oauth, off, 'never shares — a Claude subscription keeps its login in its own directory'],
+    ['an inheriting profile, global off', profile(), off, 'inherits — isolated'],
+    ['an inheriting profile, global on', profile(), on, 'inherits — shares with ~/.claude'],
+    ['an override to share', profile({ shareSessions: true }), off, 'shares with ~/.claude  (own override)'],
+    ['an override to isolate', profile({ shareSessions: false }), on, 'isolated  (own override)'],
+  ])('%s', (_label, p, settings, expected) => {
+    expect(describeShare(p, settings)).toBe(expected)
+  })
+})
+
+describe('applyProfileShare', () => {
+  const store = (providers: Record<string, Profile>) => saveStore(paths, { version: 1, providers })
+  /** The stored profile as written, not as validated: loading always yields the key. */
+  const onDisk = (name: string) => JSON.parse(readFileSync(paths.configFile, 'utf8')).providers[name] as Record<string, unknown>
+
+  test('sets an override and says what turning it on means', () => {
+    store({ glm: profile() })
+    const r = applyProfileShare(paths, 'glm', true)
+    expect(loadStore(paths).providers.glm!.shareSessions).toBe(true)
+    expect(r.changed).toBe(true)
+    expect(r.done).toBe('"glm" now shares sessions with ~/.claude')
+    expect(r.notes).toEqual(sharingOnNotes(paths, 'glm'))
+    expect(r.notes.join(' ')).toContain(profileDir(paths, 'glm'))
+  })
+
+  test('turning it off says nothing more', () => {
+    store({ glm: profile({ shareSessions: true }) })
+    const r = applyProfileShare(paths, 'glm', false)
+    expect(loadStore(paths).providers.glm!.shareSessions).toBe(false)
+    expect(r.done).toBe('"glm" has its own sessions again')
+    expect(r.notes).toEqual([])
+  })
+
+  test('undefined drops the override, so the profile follows the global again', () => {
+    store({ glm: profile({ shareSessions: true }) })
+    const r = applyProfileShare(paths, 'glm', undefined)
+    expect(onDisk('glm')).not.toHaveProperty('shareSessions')
+    expect(r.changed).toBe(true)
+    expect(r.done).toBe('"glm" follows the global setting again')
+  })
+
+  test('dropping an override that is not there changes nothing', () => {
+    store({ glm: profile() })
+    const r = applyProfileShare(paths, 'glm', undefined)
+    expect(r.changed).toBe(false)
+    expect(r.done).toBe('"glm" has no override of its own; it follows the global setting.')
+  })
+
+  // Following the default is only "turning it on" when the default is on.
+  test('the sharing notes are for a profile that starts to share, not one that already did', () => {
+    saveSettings(paths, on)
+    store({ glm: profile() })
+    expect(applyProfileShare(paths, 'glm', true).notes).toEqual([])
+    store({ glm: profile({ shareSessions: false }) })
+    expect(applyProfileShare(paths, 'glm', undefined).notes).toEqual(sharingOnNotes(paths, 'glm'))
+  })
+
+  test('refuses a subscription profile, and leaves the store alone', () => {
+    store({ work: oauth })
+    expect(() => applyProfileShare(paths, 'work', true)).toThrow(ProfileError)
+    expect(onDisk('work')).not.toHaveProperty('shareSessions')
+  })
+})
+
+describe('applyGlobalShare', () => {
+  test('writes the private settings file', () => {
+    const r = applyGlobalShare(paths, true)
+    expect(loadSettings(paths).shareSessions).toBe(true)
+    expect(statSync(paths.settingsFile).mode & 0o777).toBe(0o600)
+    expect(r.done).toBe('shareSessions is now true for profiles without an override of their own')
+  })
+
+  test('turning it on notes that existing sessions stay put, only when a profile could share', () => {
+    saveStore(paths, { version: 1, providers: { glm: profile() } })
+    expect(applyGlobalShare(paths, true).notes.join(' ')).toContain('keeps the sessions it already has')
+
+    saveSettings(paths, off)
+    saveStore(paths, { version: 1, providers: { work: oauth } })
+    expect(applyGlobalShare(paths, true).notes).toEqual([])
+  })
+
+  test('turning it off, or leaving it as it was, has no notes', () => {
+    saveSettings(paths, on)
+    saveStore(paths, { version: 1, providers: { glm: profile() } })
+    expect(applyGlobalShare(paths, true).notes).toEqual([])
+    expect(applyGlobalShare(paths, false).notes).toEqual([])
   })
 })

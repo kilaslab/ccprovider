@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { getPaths, isInside, profileDir } from './paths.js'
 import { loadStore, saveStore, getProfile, validateName, ProfileError } from './profile.js'
 import { reconcileLinks, removeProfileDir } from './configdir.js'
-import { configDirEnv, loadSettings, saveSettings, sessionConfigDir, sharesSessions } from './settings.js'
+import { applyGlobalShare, applyProfileShare, configDirEnv, describeShare, loadSettings, sessionConfigDir, sharesSessions, sharingOnNotes, type ShareChange } from './settings.js'
 import { blockHasDir, detectRcFile, pathBlockLines, upsertManagedBlock } from './shellrc.js'
 import { AGENT_CATALOG, AGENT_SOURCE, installAgents, listInstalled, readExplore, removeAgents, setExplore, syncAgents, type AgentResult } from './agents.js'
 import { buildEnv, describeEnv, findClaude, missingSlots, passThroughNotice, LaunchError } from './launch.js'
@@ -53,8 +53,9 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
   ${c.bold('ccprovider agents rm')} <name> <id…>   remove agents (-y also removes ones you edited)
   ${c.bold('ccprovider agents explore')} <name> <haiku|sonnet|opus|model-id|default>
                                       choose the model the Explore subagent runs on
-  ${c.bold('ccprovider settings')} [set shareSessions true|false [profile]]
-                                      share sessions (and --resume) with the plain claude, globally or per profile
+  ${c.bold('ccprovider settings')}                 a menu: share sessions (and --resume) with the plain claude, for every profile or one
+  ${c.bold('ccprovider settings set')} shareSessions true|false [profile]
+                                      the same without the menu, for scripts (settings unset shareSessions <profile> drops an override)
   ${c.bold('ccprovider init')}              put ccprovider's PATH entries into your ~/.zshrc or ~/.bashrc
 
 Options
@@ -195,13 +196,11 @@ function pathHint(paths: Paths): string[] {
 
 /** Bring the profile's Claude config in line with its enabled MCP servers. `previous`
  *  is what was enabled before, so servers the user just switched off can be removed.
- *  Like the command, this only ever warns. */
+ *  Like the command, this only ever warns. Not for a profile that shares its config
+ *  directory: it has nowhere of its own to register them, and `setupOwnConfig` skips this. */
 function setupMcp(paths: Paths, name: string, profile: Profile, previous: string[]): string[] {
   const preset = profile.preset ? findPreset(profile.preset) : undefined
   if (!preset?.mcp) return []
-  if (sharesSessions(profile, loadSettings(paths))) {
-    return [c.yellow(`! MCP servers not set up: "${name}" shares its config directory with ~/.claude, so there is nowhere of its own to register them. \`ccprovider settings set shareSessions false ${name}\` first.`)]
-  }
   const enabled = profile.mcp ?? []
   const { region, servers: wanted } = resolveServers(profile, preset)
 
@@ -231,11 +230,9 @@ function setupMcp(paths: Paths, name: string, profile: Profile, previous: string
 }
 
 /** Bring the profile's agents and Explore override in line with the wizard's answer.
- *  Like MCP, a failure here only warns: the profile itself is already saved. */
+ *  Like MCP, a failure here only warns: the profile itself is already saved. Not for a profile
+ *  that shares its config directory, which has no agents of its own: see `setupOwnConfig`. */
 async function setupAgents(paths: Paths, name: string, profile: Profile, wanted: string[], explore: string | null): Promise<string[]> {
-  if (sharesSessions(profile, loadSettings(paths))) {
-    return [c.yellow(`! agents not installed: "${name}" shares its config directory with ~/.claude, so it has no agents of its own. \`ccprovider settings set shareSessions false ${name}\` first.`)]
-  }
   const dir = profileDir(paths, name)
   const results = [
     ...(await syncAgents(dir, paths.claudeDir, wanted, { cacheDir: paths.cacheDir })),
@@ -244,6 +241,22 @@ async function setupAgents(paths: Paths, name: string, profile: Profile, wanted:
   // Back to the plain shared link when nothing of the profile's own is left.
   reconcileLinks(dir, paths.claudeDir)
   return results.filter((r) => r.action !== 'unchanged' && r.action !== 'absent').map(agentLine)
+}
+
+/** What `add` and `edit` set up inside the profile's own config directory: its MCP servers,
+ *  agents and Explore model. A profile that shares runs in ~/.claude and has no directory of its
+ *  own, so there is nothing to set up and the wizard did not ask. */
+async function setupOwnConfig(
+  paths: Paths,
+  name: string,
+  profile: Profile,
+  answers: { agents: string[]; explore: string | null },
+  previousMcp: string[],
+): Promise<string[]> {
+  if (sharesSessions(profile, loadSettings(paths))) {
+    return [c.dim('  Shares sessions with ~/.claude: no agents or MCP servers of its own while it does.')]
+  }
+  return [...setupMcp(paths, name, profile, previousMcp), ...(await setupAgents(paths, name, profile, answers.agents, answers.explore))]
 }
 
 function agentLine(r: AgentResult): string {
@@ -356,8 +369,7 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   // A profile that shares runs in ~/.claude and never uses this directory.
   if (!sharesSessions(result.profile, loadSettings(paths))) reconcileLinks(dir, paths.claudeDir)
 
-  for (const line of setupMcp(paths, result.name, result.profile, [])) console.log(line)
-  for (const line of await setupAgents(paths, result.name, result.profile, result.agents, result.explore)) console.log(line)
+  for (const line of await setupOwnConfig(paths, result.name, result.profile, result, [])) console.log(line)
   for (const line of await offerStatusline(paths, statusline)) console.log(line)
   const installed = install ? installCommand(paths, result.name, { automatic: true }) : null
   if (installed) {
@@ -390,17 +402,17 @@ async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: bo
   const result = await runWizard(paths, { name, profile, apiKey }, [], refresh)
   // Only `add` can be redirected to an edit; editing never asks for a name.
   if ('editInstead' in result) return 1
-  // The wizard does not ask about sharing; dropping the field here would quietly
-  // re-isolate the profile and strand the sessions it made while it shared.
-  const updated = { ...result.profile, shareSessions: profile.shareSessions }
+  const updated = result.profile
+  const settings = loadSettings(paths)
   store.providers[name] = updated
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(name, result.apiKey)
-  const shared = sharesSessions(updated, loadSettings(paths))
+  const shared = sharesSessions(updated, settings)
   // The shared dir is the symlink source itself; linking it to itself is not a thing.
   if (!shared) reconcileLinks(profileDir(paths, name), paths.claudeDir)
-  for (const line of setupMcp(paths, name, updated, profile.mcp ?? [])) console.log(line)
-  for (const line of await setupAgents(paths, name, updated, result.agents, result.explore)) console.log(line)
+  for (const line of await setupOwnConfig(paths, name, updated, result, profile.mcp ?? [])) console.log(line)
+  // Said once, here, because the sessions it already has are the surprise: they stay behind.
+  if (shared && !sharesSessions(profile, settings)) console.log(c.dim(`  ${sharingOnNotes(paths, name)[0]}`))
   p.outro('Updated.')
   return 0
 }
@@ -579,25 +591,34 @@ async function cmdInit(paths: Paths, yes: boolean): Promise<number> {
   return 0
 }
 
-/** `ccprovider settings` — install-wide settings with per-profile overrides. A bare run shows
- *  how every profile resolves; `set` changes the global file or one profile's override;
- *  `unset` drops an override so the profile inherits again. */
+/** `ccprovider settings` — install-wide settings with per-profile overrides. At a terminal a bare
+ *  run opens a menu; piped, it shows how every profile resolves. `set` changes the global file or
+ *  one profile's override, `unset` drops an override so the profile inherits again — the forms a
+ *  script uses. */
 async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
   const [sub, key, value, profileName] = args
   if (!sub) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      const { runSettingsMenu } = await import('./tui/settings.js')
+      return runSettingsMenu(paths)
+    }
     const store = loadStore(paths)
     const settings = loadSettings(paths)
     console.log(`${c.bold('settings')}  ${c.dim(paths.settingsFile)}`)
     console.log(`  shareSessions  ${c.bold(String(settings.shareSessions))}  ${c.dim('(global default)')}`)
     for (const [n, pr] of Object.entries(store.providers)) {
-      const line =
-        isOauth(pr) ? c.dim('never shares — a Claude subscription keeps its login in its own directory')
-        : pr.shareSessions === undefined ? (settings.shareSessions ? c.dim('inherits — shares with ~/.claude') : c.dim('inherits — isolated'))
-        : pr.shareSessions ? `shares with ~/.claude  ${c.dim('(own override)')}`
-        : c.dim('isolated  (own override)')
-      console.log(`  ${c.bold(n.padEnd(14))} ${line}`)
+      const line = describeShare(pr, settings)
+      // An override is the part worth noticing; "inherits" and "never" are the quiet defaults.
+      console.log(`  ${c.bold(n.padEnd(14))} ${isOauth(pr) || pr.shareSessions === undefined ? c.dim(line) : line}`)
     }
+    console.log()
+    console.log(c.dim('  change: run `ccprovider settings` in a terminal, or `ccprovider settings set shareSessions true|false [profile]`'))
     return 0
+  }
+
+  const report = (r: ShareChange) => {
+    console.log(r.changed ? `${c.green('✓')} ${r.done}` : r.done)
+    for (const note of r.notes) console.log(c.dim(`  ${note}`))
   }
 
   if (sub === 'set') {
@@ -610,32 +631,7 @@ async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
       console.error(`shareSessions takes true or false, not "${value ?? ''}".`)
       return 1
     }
-    if (profileName) {
-      const name = validateName(profileName)
-      const store = loadStore(paths)
-      const profile = getProfile(store, name)
-      if (isOauth(profile)) {
-        console.error(c.red(`"${name}" is a Claude subscription profile: its login lives in its own config directory, so it cannot share sessions.`))
-        return 1
-      }
-      if (value === 'true') {
-        console.log(c.dim(`  Sessions "${name}" already has stay in ${profileDir(paths, name)} — they will not show up in \`claude --resume\` from the shared directory, and \`ccprovider usage ${name}\` still reports them.`))
-        console.log(c.dim('  Per-profile agents and MCP servers are unavailable while it shares.'))
-      }
-      store.providers[name] = { ...profile, shareSessions: value === 'true' }
-      saveStore(paths, store)
-      console.log(value === 'true' ? `${c.green('✓')} "${name}" now shares sessions with ~/.claude` : `${c.green('✓')} "${name}" has its own sessions again`)
-      return 0
-    }
-    const settings = loadSettings(paths)
-    saveSettings(paths, { version: 1, shareSessions: value === 'true' })
-    console.log(`${c.green('✓')} shareSessions is now ${value} for profiles without an override of their own`)
-    if (!settings.shareSessions && value === 'true') {
-      const store = loadStore(paths)
-      if (Object.keys(store.providers).some((n) => !isOauth(store.providers[n]!))) {
-        console.log(c.dim('  Each profile keeps the sessions it already has; what it starts from now on runs in ~/.claude.'))
-      }
-    }
+    report(profileName ? applyProfileShare(paths, profileName, value === 'true') : applyGlobalShare(paths, value === 'true'))
     return 0
   }
 
@@ -645,16 +641,7 @@ async function cmdSettings(paths: Paths, args: string[]): Promise<number> {
       console.error('Usage: ccprovider settings unset shareSessions <profile> — the global value is never unset; set it to false.')
       return 1
     }
-    const name = validateName(value)
-    const store = loadStore(paths)
-    const profile = getProfile(store, name)
-    if (profile.shareSessions === undefined) {
-      console.log(`"${name}" has no override of its own; it follows the global setting.`)
-      return 0
-    }
-    delete profile.shareSessions
-    saveStore(paths, store)
-    console.log(`${c.green('✓')} "${name}" follows the global setting again`)
+    report(applyProfileShare(paths, value, undefined))
     return 0
   }
 

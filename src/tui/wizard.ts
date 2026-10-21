@@ -6,6 +6,7 @@ import { validateName } from '../profile.js'
 import { regionFor } from '../mcp.js'
 import { AGENT_CATALOG, AGENT_SOURCE, listInstalled, readExplore } from '../agents.js'
 import { startChoiceOf } from '../launch.js'
+import { loadSettings, shareOverride, sharesSessions } from '../settings.js'
 import { profileDir } from '../paths.js'
 import { OPUSPLAN, type Profile, type Preset } from '../types.js'
 import type { Paths } from '../paths.js'
@@ -188,13 +189,27 @@ export async function runWizard(
   // ---- 8. effort
   const effortLevel = existing?.profile.effortLevel ?? preset?.effortLevel ?? null
 
-  // ---- 9. the provider's own MCP servers
-  const mcp = await chooseMcp(preset, baseUrl, existing?.profile)
+  // ---- 9. chat sessions: asked before MCP and agents because a profile that shares runs in
+  // ~/.claude and has no config directory of its own to put either in. Starts on what the
+  // profile gets today — No for a new one while the global default is off.
+  const settings = loadSettings(paths)
+  const shares = orCancel(
+    await p.confirm({
+      message: 'Share chat sessions with the plain claude?  (--resume sees them; no agents or MCP servers of its own)',
+      initialValue: existing ? sharesSessions(existing.profile, settings) : settings.shareSessions,
+    }),
+  )
 
-  // ---- 10. agents, and the model Explore runs on
+  // ---- 10. the provider's own MCP servers, the agents, and the model Explore runs on.
+  // None of it is asked while the profile shares: the caller installs nothing then, so what
+  // the profile has now is handed back as it was.
   const dir = profileDir(paths, name)
-  const agents = await chooseAgents(existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : null)
-  const explore = await chooseExplore(aliases, existing ? (readExplore(dir)?.model ?? null) : null)
+  const installedAgents = existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : null
+  const currentExplore = existing ? (readExplore(dir)?.model ?? null) : null
+  const mcp = shares ? existing?.profile.mcp : await chooseMcp(preset, baseUrl, existing?.profile)
+  const agents = shares ? (installedAgents ?? []) : await chooseAgents(installedAgents)
+  const explore = shares ? currentExplore : await chooseExplore(aliases, currentExplore)
+  const shareSessions = shareOverride(shares, existing?.profile.shareSessions, settings)
 
   const profile: Profile = {
     baseUrl,
@@ -207,6 +222,7 @@ export async function runWizard(
     blankApiKey: existing?.profile.blankApiKey ?? preset?.blankApiKey ?? false,
     preset: presetId as string,
     mcp,
+    ...(shareSessions !== undefined ? { shareSessions } : {}),
     createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
   }
 
@@ -220,8 +236,13 @@ export async function runWizard(
       `start      ${defaultModel === OPUSPLAN ? `opusplan (plan ${aliases.opus} → execute ${aliases.sonnet})` : defaultModel}`,
       contextTokens ? `context    ${contextTokens.toLocaleString()} tokens` : '',
       autoCompactWindow ? `compact at ${autoCompactWindow.toLocaleString()} tokens` : '',
-      `agents     ${agents.length ? agents.join(', ') : 'none'}`,
-      `explore    ${explore ? `${explore}${aliases[explore as keyof typeof aliases] ? ` (${aliases[explore as keyof typeof aliases]})` : ''}` : 'built-in, on the session model'}`,
+      `sessions   ${shares ? 'shared with ~/.claude' : 'its own directory'}`,
+      ...(shares
+        ? []
+        : [
+            `agents     ${agents.length ? agents.join(', ') : 'none'}`,
+            `explore    ${explore ? `${explore}${aliases[explore as keyof typeof aliases] ? ` (${aliases[explore as keyof typeof aliases]})` : ''}` : 'built-in, on the session model'}`,
+          ]),
     ].filter(Boolean).join('\n'),
     name,
   )
