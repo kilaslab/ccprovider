@@ -1,4 +1,4 @@
-import { loadStore, getProfile } from '../profile.js'
+import { loadStore, getProfile, assertNotReserved } from '../profile.js'
 import { renameProfile } from '../rename.js'
 import { selfLauncher } from '../shim.js'
 import { p } from '../tui/prompts.js'
@@ -7,6 +7,8 @@ import { c, type Paths, type Secrets } from '../ui.js'
 export async function cmdRename(paths: Paths, secrets: Secrets, from: string, to: string, yes: boolean): Promise<number> {
   const store = loadStore(paths)
   getProfile(store, from)
+  // Before asking: a question about a rename that is going to be refused anyway.
+  assertNotReserved(to)
 
   if (!yes) {
     const ok = await p.confirm({

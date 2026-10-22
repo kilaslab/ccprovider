@@ -7,6 +7,7 @@ import { validateName, ProfileError } from './profile.js'
 import { LaunchError } from './launch.js'
 import { detectStore } from './secrets/index.js'
 import { parseEnvFormat } from './envformat.js'
+import { ADD_ONLY_FLAGS, addFlagsFromArgs } from './addflags.js'
 import { c, requireName } from './ui.js'
 import { cmdAgents } from './commands/agents.js'
 import { cmdAdd, cmdAddDefault } from './commands/add.js'
@@ -101,6 +102,24 @@ async function main(argv: string[]): Promise<number> {
       'no-install': { type: 'boolean', default: false },
       'no-statusline': { type: 'boolean', default: false },
       default: { type: 'boolean', default: false },
+      // `add` without the wizard: --provider switches it off, the rest answers its questions.
+      provider: { type: 'string' },
+      name: { type: 'string' },
+      'base-url': { type: 'string' },
+      'key-stdin': { type: 'boolean', default: false },
+      opus: { type: 'string' },
+      sonnet: { type: 'string' },
+      haiku: { type: 'string' },
+      subagent: { type: 'string' },
+      start: { type: 'string' },
+      context: { type: 'string' },
+      compact: { type: 'string' },
+      'share-sessions': { type: 'boolean' },
+      'no-share-sessions': { type: 'boolean' },
+      agents: { type: 'string' },
+      explore: { type: 'string' },
+      mcp: { type: 'string' },
+      'no-probe': { type: 'boolean', default: false },
       // Written into the default wrapper, not typed: see cmdUse.
       'from-default': { type: 'boolean', default: false },
     },
@@ -112,7 +131,7 @@ async function main(argv: string[]): Promise<number> {
 
   // An option that belongs to one command is refused on the others. Ignored without a word,
   // `usage --format json` printed the table with exit 0, and a script piped it to jq.
-  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', default: 'add', 'from-default': 'use' }
+  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', default: 'add', 'from-default': 'use', provider: 'add', ...Object.fromEntries(ADD_ONLY_FLAGS.map((f) => [f, 'add'])) }
   for (const [flag, owner] of Object.entries(OWNED)) {
     const given = (values as Record<string, unknown>)[flag]
     if (given !== undefined && given !== false && cmd !== owner) {
@@ -130,9 +149,10 @@ async function main(argv: string[]): Promise<number> {
         console.error('--no-install does not apply with --default: the default `claude` is never installed as a command of its own.')
         return 1
       }
-      return values.default
-        ? cmdAddDefault(paths, secrets, values.refresh, !values['no-statusline'])
-        : cmdAdd(paths, secrets, values.refresh, !values['no-install'], !values['no-statusline'])
+    {
+      const opts = { refresh: values.refresh, install: !values['no-install'], statusline: !values['no-statusline'], flags: addFlagsFromArgs(values), yes: values.yes }
+      return values.default ? cmdAddDefault(paths, secrets, opts) : cmdAdd(paths, secrets, opts)
+    }
     case 'ls': case 'list': return cmdList(paths, secrets)
     case 'use': return cmdUse(paths, secrets, requireName(name, 'use'), values.model ?? null, passthrough, values['from-default'])
     case 'edit': return cmdEdit(paths, secrets, requireName(name, 'edit'), values.refresh)
