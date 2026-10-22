@@ -3,7 +3,9 @@ import { open, type FileHandle } from 'node:fs/promises'
 import { createHash, randomBytes } from 'node:crypto'
 import { dirname, join, relative } from 'node:path'
 import type { Paths } from './paths.js'
+import { findPreset } from './presets.js'
 import { ProfileError } from './profile.js'
+import { epochAt, type Epoch } from './slot.js'
 
 /**
  * Token usage per profile, read from the transcripts Claude Code keeps in each profile's
@@ -450,6 +452,11 @@ export interface UsageRow {
   profile: string
   model: string
   day?: string
+  /** The provider the profile was when these calls were made, for a profile that has changed
+   *  provider under a kept directory (the default). Absent for every other profile. */
+  era?: string
+  /** Whether that provider was a Claude subscription. Set together with `era`. */
+  eraClaude?: boolean
   calls: number
   input: number
   output: number
@@ -470,6 +477,8 @@ export interface AggregateOptions {
   by?: 'day'
   /** Injectable so a test does not depend on the time zone it runs in. */
   dayOf?: (epochSeconds: number) => string
+  /** When a profile (by label) changed provider. Calls are told apart by the time they were made. */
+  epochs?: Record<string, Epoch[]>
 }
 
 const localDay = (s: number): string => {
@@ -484,13 +493,22 @@ export function aggregate(ledgers: Record<string, Ledger>, opts: AggregateOption
   const out: UsageRow[] = []
   for (const [profile, ledger] of Object.entries(ledgers)) {
     const rows = new Map<string, UsageRow>()
+    const epochs = opts.epochs?.[profile] ?? []
+    // Eras in the order the profile lived them; a provider it came back to is the same era.
+    const eraOrder = new Map<string, number>()
+    for (const e of epochs) if (!eraOrder.has(e.preset)) eraOrder.set(e.preset, eraOrder.size)
     for (const [model, ts, input, output, cacheRead, cacheWrite] of Object.values(ledger.calls)) {
       if (opts.since !== undefined && ts < opts.since) continue
       const day = opts.by === 'day' ? dayOf(ts) : undefined
-      const key = `${day ?? ''}\0${model}`
+      const epoch = epochAt(epochs, ts)
+      const key = `${day ?? ''}\0${epoch?.preset ?? ''}\0${model}`
       let row = rows.get(key)
       if (!row) {
-        row = { profile, model, ...(day !== undefined ? { day } : {}), calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheReported: false }
+        row = {
+          profile, model, ...(day !== undefined ? { day } : {}),
+          ...(epoch ? { era: epoch.preset, eraClaude: epoch.claude } : {}),
+          calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheReported: false,
+        }
         rows.set(key, row)
       }
       row.calls++
@@ -500,7 +518,8 @@ export function aggregate(ledgers: Record<string, Ledger>, opts: AggregateOption
       row.cacheWrite += cacheWrite ?? 0
       if (cacheRead !== null || cacheWrite !== null) row.cacheReported = true
     }
-    out.push(...[...rows.values()].sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || a.model.localeCompare(b.model)))
+    const era = (r: UsageRow) => (r.era === undefined ? -1 : (eraOrder.get(r.era) ?? -1))
+    out.push(...[...rows.values()].sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || era(a) - era(b) || a.model.localeCompare(b.model)))
   }
   return out
 }
@@ -554,17 +573,30 @@ export function renderUsage(rows: UsageRow[], opts: { subscription: Set<string>;
   const profiles = [...new Set(rows.map((r) => r.profile))]
   const withDay = rows.some((r) => r.day !== undefined)
 
-  // A profile that is a Claude subscription now may have been a provider before: `add --default`
-  // keeps the slot's directory, so its transcripts and its ledger go on across the change. Its
-  // rows are told apart by model, because the label says who bills them. A heuristic, and it
-  // has a hole: a provider can answer under a Claude name (docs/usage.md: Z.ai does), and those
-  // calls land under "Claude subscription". The other direction is certain — a subscription only
-  // produces Claude models, so any other model in it came from an earlier provider. A provider
-  // profile's rows stay as they are, unlabelled.
+  // A profile that changed provider under a kept directory (the default) has transcripts from
+  // every provider it was. Where the slot recorded when it changed, each call carries the
+  // provider it went to, and the rows are grouped by that: the label says who bills them.
+  const eraLabel = (era: string, claude: boolean) => (claude ? 'Claude subscription' : (findPreset(era)?.label.split('  ')[0] ?? era))
+  //
+  // Without a record (a default from before it was kept), the only thing to go on is the model's
+  // name, and that has a hole: a provider can answer under a Claude name (docs/usage.md: Z.ai
+  // does), and those calls land under "Claude subscription". The other direction is certain — a
+  // subscription only produces Claude models, so any other model in it came from an earlier
+  // provider. A provider profile's rows stay as they are, unlabelled.
   const isClaudeModel = (model: string) => /^claude-/i.test(model)
   const groups: Array<{ profile: string; mine: UsageRow[]; note: string }> = []
   for (const profile of profiles) {
     const all = rows.filter((r) => r.profile === profile)
+    if (all.some((r) => r.era !== undefined)) {
+      const eras = [...new Set(all.map((r) => r.era))]
+      for (const era of eras) {
+        const mine = all.filter((r) => r.era === era)
+        const claude = mine[0]!.eraClaude === true
+        // One provider all along reads as any other profile; the label matters once there are two.
+        groups.push({ profile, mine, note: eras.length > 1 || claude ? `  ${eraLabel(era ?? '', claude)}` : '' })
+      }
+      continue
+    }
     if (!opts.subscription.has(profile)) {
       groups.push({ profile, mine: all, note: '' })
       continue

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { profileDir } from '../paths.js'
 import { loadStore, getProfile, ProfileError } from '../profile.js'
 import { loadSettings, sharesSessions } from '../settings.js'
+import { DEFAULT_SLOT, loadSlot, type Epoch } from '../slot.js'
 import { aggregate, ledgerPath, parseSince, prepareLedger, progressPercent, renderUsage, saveLedger, scanProfile, sharedLedgerPath, unreadableTotal, type Ledger } from '../usage.js'
 import { p } from '../tui/prompts.js'
 import { isClaude } from '../types.js'
@@ -83,7 +84,9 @@ export async function cmdUsage(paths: Paths, name: string | undefined, flags: Us
     ledgers[scan.label] = ledger
   }
 
-  const rows = aggregate(ledgers, { since, by: flags.by === 'day' ? 'day' : undefined })
+  // The default may have been several providers over its life; the slot file says when.
+  const epochs = loadSlotEpochs(paths)
+  const rows = aggregate(ledgers, { since, by: flags.by === 'day' ? 'day' : undefined, epochs: { [DEFAULT_SLOT]: epochs } })
   if (flags.json) {
     console.log(JSON.stringify({ rows, unreadableLines: unreadable, skippedFiles: skipped }, null, 2))
     return 0
@@ -103,4 +106,14 @@ export async function cmdUsage(paths: Paths, name: string | undefined, flags: Us
   if (skipped) console.log(dim(`${skipped} transcript${skipped === 1 ? '' : 's'} could not be opened (deleted or locked meanwhile) and will be tried again next time.`))
   if (unreadable) console.log(dim(`${unreadable} line${unreadable === 1 ? '' : 's'} that looked like a call could not be read and were skipped.`))
   return 0
+}
+
+/** The default's history of providers, or none when it has no slot file or it cannot be read:
+ *  usage must not fail over a file that only refines how its rows are labelled. */
+function loadSlotEpochs(paths: Paths): Epoch[] {
+  try {
+    return loadSlot(paths).epochs
+  } catch {
+    return []
+  }
 }

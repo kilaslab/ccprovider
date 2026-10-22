@@ -834,6 +834,64 @@ describe('renderUsage', () => {
     expect(out).not.toContain('earlier provider')
   })
 
+  describe('by the time of the call, for a profile that changed provider', () => {
+    // The default was GLM (which answers under a Claude name), then a Claude subscription.
+    const epochs = { default: [{ from: 0, preset: 'glm', claude: false }, { from: T0 + 100, preset: 'claude-token', claude: true }] }
+    const ledger = () => {
+      const l = emptyLedger()
+      l.calls.a = ['claude-sonnet-4-5', T0, 1000, 10, 0, 0] // GLM answering as a Claude model
+      l.calls.b = ['glm-5.3', T0 + 10, 500, 5, 0, 0]
+      l.calls.c = ['claude-opus-5-5', T0 + 200, 700, 7, 0, 0]
+      return l
+    }
+
+    test('each call goes to the provider it was made on, whatever the model is called', () => {
+      const rows = aggregate({ default: ledger() }, { epochs })
+      const by = (era: string) => rows.filter((r) => r.era === era).map((r) => r.model).sort()
+      expect(by('glm')).toEqual(['claude-sonnet-4-5', 'glm-5.3'])
+      expect(by('claude-token')).toEqual(['claude-opus-5-5'])
+      expect(rows.find((r) => r.era === 'claude-token')!.eraClaude).toBe(true)
+      expect(rows.map((r) => r.era)).toEqual(['glm', 'glm', 'claude-token']) // in the order it lived them
+    })
+
+    test('and is shown under its provider\'s name', () => {
+      const rows = aggregate({ default: ledger() }, { epochs })
+      const out = plain(renderUsage(rows, { subscription: new Set(['default']), color: false }))
+      const lines = out.split('\n')
+      const glm = lines.findIndex((x) => x.startsWith('default') && x.includes('GLM'))
+      const claude = lines.findIndex((x) => x.startsWith('default') && x.includes('Claude subscription'))
+      expect(glm).toBeGreaterThanOrEqual(0)
+      expect(claude).toBeGreaterThan(glm)
+      expect(lines.slice(glm, claude).join('\n')).toContain('claude-sonnet-4-5') // billed by GLM, not the plan
+      expect(lines.slice(claude).join('\n')).toContain('claude-opus-5-5')
+      expect(lines.slice(claude).join('\n')).not.toContain('glm-5.3')
+    })
+
+    test('a provider it came back to is one group, and a profile with no record is untouched', () => {
+      const back = { default: [...epochs.default, { from: T0 + 300, preset: 'glm', claude: false }] }
+      const l = ledger()
+      l.calls.d = ['glm-5.3', T0 + 400, 100, 1, 0, 0]
+      const rows = aggregate({ default: l, other: ledger() }, { epochs: back })
+      expect(rows.filter((r) => r.profile === 'default' && r.era === 'glm' && r.model === 'glm-5.3')[0]!.calls).toBe(2)
+      expect(rows.filter((r) => r.profile === 'other').every((r) => r.era === undefined)).toBe(true)
+    })
+
+    test('one provider all along carries no label, as any other profile', () => {
+      const l = emptyLedger()
+      l.calls.a = ['glm-5.3', T0, 1, 1, 0, 0]
+      const rows = aggregate({ default: l }, { epochs: { default: [{ from: 0, preset: 'glm', claude: false }] } })
+      const out = plain(renderUsage(rows, { subscription: new Set(), color: false }))
+      expect(out.split('\n')[0]).toBe('default')
+    })
+
+    test('--by day splits a day that has a switch in it, and --since still filters', () => {
+      const rows = aggregate({ default: ledger() }, { epochs, by: 'day', dayOf: () => '2026-10-10' })
+      expect(rows.map((r) => `${r.day} ${r.era}`)).toEqual(['2026-10-10 glm', '2026-10-10 glm', '2026-10-10 claude-token'])
+      const later = aggregate({ default: ledger() }, { epochs, since: T0 + 100 })
+      expect(later.map((r) => r.era)).toEqual(['claude-token'])
+    })
+  })
+
   test('says so when there is nothing to show', () => {
     expect(plain(renderUsage([], { subscription: new Set(), color: false }))).toContain('No usage')
   })
