@@ -9,6 +9,10 @@ ccprovider default           # which profile is it?
 ccprovider default --off     # put the real claude back
 ```
 
+Or skip the extra profile: `ccprovider add --default` makes one profile called `default`, replaced
+in place each time you pick another provider, and `ccprovider default --use deepseek` swaps back
+to one it kept. See [One profile called `default`](#one-profile-called-default-replaced-in-place).
+
 ## What it does
 
 `ccprovider default glm` writes a small script called `claude` into
@@ -60,6 +64,80 @@ would take over all of them (see [the warning about `coding-helper`](../README.m
 Any profile can be the default, including a Claude subscription one. Running
 `ccprovider default <other>` again switches it.
 
+## One profile called `default`, replaced in place
+
+`ccprovider default <name>` points `claude` at a profile you made with `add`, so every provider
+you try is one more profile. If you only ever want one provider at a time, do this instead:
+
+```bash
+ccprovider add --default      # pick a provider; it is written as the profile "default"
+```
+
+It skips the name question, writes a single profile called `default`, and makes `claude` run it.
+Pick another provider later and that profile is **overwritten**, not added to. It works for every
+provider, a Claude subscription (`/login`) and a setup-token one included, and `claude` needs no
+`PATH` change the second time: the script is already in place. The name `default` is reserved for
+this, so `add` and `rename` will not hand it out to an ordinary profile. (A profile called
+`default` from before the rule keeps working as it is.)
+
+What it replaces is **kept, not deleted**. The old profile and its key (or setup-token) are filed
+under the provider they were — `deepseek`, `claude-token`, `claude` for a `/login`, and so on — in
+`~/.config/ccprovider/slot.json` and your keychain under `default:<provider>`. They are not
+profiles, so `ccprovider ls` shows them only as a line under `default`:
+
+```
+default        ready
+  https://api.deepseek.com/anthropic
+  command claude  (the default)
+  stashed: claude-token  — `ccprovider default --use <name>`
+```
+
+Swap back with no wizard and no key typed:
+
+```bash
+ccprovider default --use claude-token    # the subscription is back; deepseek is kept
+ccprovider default --use deepseek        # and the other way
+ccprovider default --forget deepseek     # drop one, and its key
+```
+
+One is kept per provider, so a second `custom` gateway replaces the first. `ccprovider rm default`
+removes the profile, everything it stashed and their keys. `ccprovider doctor` checks each kept
+key is still in the keychain.
+
+### Carrying a session across
+
+The directory of `default` stays the same through every swap, so its session history does too. The
+case this is for: a Claude subscription runs out in the middle of work.
+
+```bash
+ccprovider default --use deepseek
+claude --continue                        # the last session in this folder, now on DeepSeek
+```
+
+`--use` says so when it will not work: if the two providers differ in sharing (one shares
+`~/.claude`, the other has its own directory), their sessions are in different places and
+`claude --continue` will not find the other's. Give both the same choice in `ccprovider settings`.
+
+Not tested end to end: whether a provider accepts a transcript written by a different model's
+thinking blocks. If a resumed session errors, start a new one in the same folder.
+
+A `/login` is set aside (`.credentials.stashed.json` in the profile's directory) when the default
+stops being that subscription, and put back when you swap to it, so you do not sign in again.
+On macOS the login itself lives in the Keychain and is not touched.
+
+### Without the wizard
+
+For a script or a machine with no terminal, the answers come from flags and the key from standard
+input; nothing is asked:
+
+```bash
+printf '%s' "$KEY" | ccprovider add --provider deepseek --key-stdin --default -y
+```
+
+`-y` is required to replace an existing default. The full list of flags is in
+`ccprovider --help`. A check of the endpoint and every model runs first and a failure exits
+non-zero; `--no-probe` skips it.
+
 ## A `claude` inside a session
 
 A session that `ccprovider use` starts is marked (`CCPROVIDER_SESSION=1`). The script knows
@@ -87,6 +165,8 @@ The default `claude` uses the profile's own directory
 agents, commands, `CLAUDE.md` and `settings.json` are shared from `~/.claude`; history and the
 login are the profile's own (see
 [Profiles are isolated but not duplicated](../README.md#profiles-are-isolated-but-not-duplicated)).
+For the `default` profile this directory is kept when you change provider with
+`ccprovider add --default` or `default --use`, so its sessions carry over.
 
 So sessions you had in `~/.claude` before do not show up in `claude --resume`; they are still
 there, and calling the real binary by its path (`~/.local/bin/claude`) reads them again.
@@ -99,14 +179,16 @@ If you want the opposite — one directory of sessions for every profile and the
 - `ccprovider default --off` removes the script. `claude` is Claude Code as installed again.
 - To keep the override but still reach Anthropic's models, make a **Claude subscription**
   profile in `ccprovider add` (it gets its own login) and use its command, `pclaude` for
-  example, or make that the default.
+  example, or make that the default. With `add --default`, pick "Claude subscription" or
+  "Claude subscription (setup-token)", or `ccprovider default --use claude-token` if you had it.
 - The real binary is still where it was. Calling it by path skips the script.
 
 ## Renaming and deleting the profile
 
 - `ccprovider rename glm zai` points the script at `zai`.
 - `ccprovider rm glm` removes the script too, so `claude` is not left launching a profile
-  that is gone.
+  that is gone. `rm default` also removes everything the default stashed.
+- The `default` profile cannot be renamed once it has stashed providers.
 - `doctor` reports a script whose profile no longer exists as a failure.
 
 ## A server or a mini PC

@@ -30,6 +30,8 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
 
   ${c.bold('ccprovider add')}                      set up a provider profile
   ${c.bold('ccprovider add --default')}            set up the profile behind the plain  claude , replacing the current default
+  ${c.bold('ccprovider add --provider')} <id> --key-stdin [flags]
+                                      the same without the wizard, for scripts: the key comes from stdin, nothing is asked
   ${c.bold('ccprovider ls')}                       list profiles
   ${c.bold('ccprovider use')} <name> [-m tier]     launch Claude Code with that profile
   ${c.bold('ccprovider edit')} <name>              change a profile
@@ -38,6 +40,7 @@ const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic
   ${c.bold('ccprovider install')} [name]           make a profile a command:  glm  instead of  ccprovider use glm
   ${c.bold('ccprovider uninstall')} [name]         remove that command
   ${c.bold('ccprovider default')} [name]           make a profile the plain  claude  command (--off: put the real one back)
+  ${c.bold('ccprovider default --use')} <provider> swap the default to one it stashed, no wizard (--forget <provider> drops it)
   ${c.bold('ccprovider doctor')} [name]            check a profile end to end
   ${c.bold('ccprovider usage')} [name]             tokens used per model: input, output and cache
   ${c.bold('ccprovider statusline')} [add|rm]      show context use in Claude Code's footer (one install covers every profile)
@@ -62,7 +65,20 @@ Options
   --no-install            with add: do not install the profile as a command
   --no-statusline         with add: do not offer the token footer
   --default               with add: write the single "default" profile (overwritten in place)
-                          and make it the plain  claude  command
+                          and make it the plain  claude  command; what it replaces is stashed
+  --provider <id>         with add: no wizard. deepseek | kimi | glm | minimax | openrouter | custom |
+                          claude (a /login) | claude-token (a setup-token). The rest answers its questions:
+  --name <name>           the profile's name (default: the provider's)        --base-url <url>
+  --key-stdin             read the key from standard input, never an argument
+  --opus --sonnet --haiku --subagent <model-id>   map the tiers (a preset fills what you leave out)
+  --start <opus|sonnet|opusplan|model-id>         what sessions start on
+  --context <tokens> --compact <tokens>           the model's window, and where to auto-compact
+  --share-sessions | --no-share-sessions          share ~/.claude's sessions, or not
+  --agents <none|recommended|id,id>  --explore <haiku|sonnet|opus|model-id>  --mcp <none|id,id>
+  --no-probe              do not check the endpoint and models before saving
+                          (with --default, -y confirms replacing the current default)
+  --use <provider>        with default: swap to a provider the default stashed
+  --forget <provider>     with default: drop a stashed provider and its key
   --off                   with default: stop overriding  claude
   --since <7d|YYYY-MM-DD> with usage: only calls from then on
   --by day                with usage: one row per day

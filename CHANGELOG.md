@@ -6,6 +6,40 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-22
+
+### Added
+
+- **`ccprovider default --use <provider>`** swaps the default `claude` to a provider it kept, with
+  no wizard and no key typed. `add --default` no longer deletes what it replaces: the old profile
+  and its key (or setup-token) are filed per provider in `slot.json` and the keychain
+  (`default:<provider>`), and `default` lists them; `default --forget <provider>` drops one. The
+  directory is the same through every swap, so `claude --continue` picks a session up on the
+  other provider; `--use` warns when the two differ in sharing and the session would not be found.
+  A `/login` is set aside (`.credentials.stashed.json`) instead of deleted and comes back with it.
+  `ls` shows the stashed line under `default`, `doctor` checks each stashed key, and `rm default`
+  removes them all.
+- **`ccprovider add` without the wizard.** `--provider <id>` switches the wizard off and the rest
+  of the flags answer its questions: `--key-stdin` (the key comes from standard input, never an
+  argument), `--name`, `--base-url`, `--opus --sonnet --haiku --subagent`, `--start`, `--context`,
+  `--compact`, `--share-sessions` / `--no-share-sessions`, `--agents`, `--explore`, `--mcp`,
+  `--no-probe`. Nothing is asked: what the wizard would confirm is refused (replacing the default
+  needs `-y`), and a failed check of the endpoint or a model exits non-zero. Combine with
+  `--default` to set the default from a script.
+- **`usage` tells a default that changed provider apart by when each call was made.** The default
+  records the time of every change, and its rows are grouped by the provider each call went to:
+  a provider answering under a Claude model name is no longer counted as a subscription. `--json`
+  rows gain `era`.
+
+### Changed
+
+- **`default` is a reserved profile name** for `add --default`: `add` and `rename` refuse it as a
+  new name. A profile called `default` from before keeps loading and running, and can be renamed
+  away until it has been used as the slot. Once it has stashed providers it cannot be renamed.
+- `cli.ts` is split into one module per command (`src/commands/`) and shared helpers (`src/ui.ts`,
+  `src/pathhint.ts`, `src/setup.ts`), with no change in behaviour. `setupMcp` plans its changes in
+  a pure `planMcp`, which has tests, along with the wizard (scripted prompts) and the new flows.
+
 ## [0.5.0] - 2026-10-22
 
 ### Added
