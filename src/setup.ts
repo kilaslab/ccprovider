@@ -3,7 +3,7 @@ import { reconcileLinks } from './configdir.js'
 import { loadSettings, sharesSessions } from './settings.js'
 import { setExplore, syncAgents } from './agents.js'
 import { findClaude } from './launch.js'
-import { claudeRunner, readInstalledMcp, resolveServers, resolveUnwanted, syncMcp } from './mcp.js'
+import { claudeRunner, readInstalledMcp, resolveServers, resolveUnwanted, syncMcp, type Desired, type Unwanted } from './mcp.js'
 import { findPreset } from './presets.js'
 import type { Profile } from './types.js'
 import { c, type Paths, agentLine } from './ui.js'
@@ -15,15 +15,18 @@ export interface PreviousConfig {
   preset?: string
 }
 
-/** Bring the profile's Claude config in line with its enabled MCP servers. `before`
- *  is what was enabled before, so servers the user just switched off can be removed.
- *  Like the command, this only ever warns. A profile that shares its config directory has
- *  nowhere of its own to register servers, so `setupOwnConfig` calls it with `removeOnly`: only
- *  a provider that was switched away from loses its servers. */
-export function setupMcp(paths: Paths, name: string, profile: Profile, before: PreviousConfig, removeOnly = false): string[] {
+/**
+ * Which MCP servers to register and which to take away. Pure, so the decisions can be tested
+ * without a `claude` to run. `before` is what the profile had enabled before, so servers the
+ * user just switched off can be removed. A profile that shares its config directory has nowhere
+ * of its own to register servers, so it is planned with `removeOnly`: only a provider that was
+ * switched away from loses its servers.
+ */
+export function planMcp(profile: Profile, before: PreviousConfig, removeOnly = false): { wanted: Desired[]; unwanted: Unwanted[] } {
   const previous = before.mcp ?? []
   const preset = profile.preset ? findPreset(profile.preset) : undefined
-  const oldPreset = (before.preset ?? profile.preset) ? findPreset((before.preset ?? profile.preset)!) : undefined
+  const oldPresetId = before.preset ?? profile.preset
+  const oldPreset = oldPresetId ? findPreset(oldPresetId) : undefined
   // The provider changed under a kept directory (`add --default`): everything the old one
   // registered goes, whatever the new profile enables, and it is recognised by the old preset's
   // definitions. Its helpers read this profile's key, which now belongs to someone else.
@@ -43,12 +46,27 @@ export function setupMcp(paths: Paths, name: string, profile: Profile, before: P
     ...resolveUnwanted(switched ? previous : previous.filter((id) => !enabled.includes(id)), switched ? oldPreset : preset),
     ...(!removeOnly && resolved && !resolved.region ? resolveUnwanted(enabled, preset) : []),
   ]
+  return { wanted, unwanted }
+}
+
+/** Bring the profile's Claude config in line with its enabled MCP servers (see `planMcp`).
+ *  Like the command, this only ever warns. `resolveClaude` is where the `claude` binary comes
+ *  from; tests give it a stand-in. */
+export function setupMcp(
+  paths: Paths,
+  name: string,
+  profile: Profile,
+  before: PreviousConfig,
+  removeOnly = false,
+  resolveClaude: () => string = () => findClaude(process.env, [paths.defaultBinDir]),
+): string[] {
+  const { wanted, unwanted } = planMcp(profile, before, removeOnly)
   if (!wanted.length && !unwanted.length) return []
 
   const dir = profileDir(paths, name)
   let claude: string
   try {
-    claude = findClaude(process.env, [paths.defaultBinDir])
+    claude = resolveClaude()
   } catch (e) {
     return [c.yellow(`! MCP servers not set up: ${(e as Error).message}`), c.dim(`  Run \`ccprovider edit ${name}\` once claude is installed.`)]
   }
