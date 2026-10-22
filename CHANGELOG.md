@@ -6,6 +6,29 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
+### Added
+
+- **`add` and `edit` ask whether the profile shares its chat sessions** with the plain
+  `claude` ("Share chat sessions with the plain claude?"), starting on No unless the global
+  default says otherwise. An answer that only repeats the default is not stored, so the
+  profile keeps following it; a different one becomes the profile's own override. It is asked
+  before MCP servers, agents and the Explore model, which are skipped while the profile shares:
+  it has no config directory of its own to put them in.
+
+### Changed
+
+- **`ccprovider settings` is a menu at a terminal.** It lists the global default and every
+  profile with what each resolves to; pick one to change it, and each change is saved as it is
+  made. Piped, it prints the same list and now ends with the command to change it. `settings
+  set` and `settings unset` work as before for scripts, and now say so when the value was
+  already set. The hint line goes to stderr, so a script reading the list gets only the list.
+- `edit` no longer copies a profile's sharing override over whatever the wizard decided: the
+  wizard owns it now. Answering so a profile lands back on the default (Yes to share, later No,
+  with the default off) drops its override, so it follows the default again.
+- `settings set shareSessions true ""` is refused instead of changing the global default.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added
@@ -305,7 +328,8 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kilaslab/ccprovider/compare/v0.1.4...v0.2.0

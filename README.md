@@ -207,11 +207,17 @@ up without re-running setup. `ccprovider rm` unlinks rather than follows, so you
 config is never touched.
 
 If you would rather one provider's sessions be the same sessions `claude --resume` sees,
-turn on sharing — globally, or for one profile:
+turn on sharing. `ccprovider add` and `ccprovider edit` ask ("Share chat sessions with the
+plain claude?", **No** unless you changed the default). An answer that only repeats the
+default is not stored, so the profile keeps following it. To change it later, or to change
+the default for every profile, run `ccprovider settings` — a menu that lists the default and
+each profile with what it resolves to:
 
 ```bash
-ccprovider settings set shareSessions true          # every profile that has no override
+ccprovider settings                                 # the menu
+ccprovider settings set shareSessions true          # every profile that has no override (scripts)
 ccprovider settings set shareSessions true glm      # just glm
+ccprovider settings unset shareSessions glm         # glm follows the default again
 ```
 
 A sharing profile runs in `~/.claude` itself, so its new sessions, `--resume` history and
@@ -240,7 +246,7 @@ had before stay in its own directory; `ccprovider usage glm` still reports them.
 | `ccprovider agents <name>` | list a profile's agents and its Explore model |
 | `ccprovider agents add\|rm <name> <id…>` | install or remove agents |
 | `ccprovider agents explore <name> <model>` | run Explore on `haiku`, `sonnet`, `opus`, a model ID, or `default` |
-| `ccprovider settings [set shareSessions true\|false [name]]` | share sessions with the plain `claude`, globally or per profile |
+| `ccprovider settings [set shareSessions true\|false [name]]` | a menu to share sessions with the plain `claude`, for every profile or one; `set` does the same for scripts |
 | `ccprovider init` | add ccprovider's `PATH` entries to your zsh or bash startup file |
 
 `add` and `edit` take `--refresh` to bypass the 24-hour model-list cache. `add` takes

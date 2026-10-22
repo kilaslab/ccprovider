@@ -134,7 +134,7 @@ export async function runDoctor(
     checks.push({
       label: 'MCP tools',
       status: 'warn',
-      detail: `cannot be installed while this profile shares its config directory — \`ccprovider settings set shareSessions false ${name}\` first`,
+      detail: `cannot be installed while this profile shares its config directory — \`ccprovider settings\` (or \`ccprovider settings set shareSessions false ${name}\`) stops it sharing`,
     })
   }
 

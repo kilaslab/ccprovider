@@ -546,11 +546,48 @@ describe('settings', () => {
     expect(run('settings').out).toContain('inherits — shares with ~/.claude')
   })
 
+  // The menu needs a terminal. Piped, as in a script or here, the list is all there is, so it
+  // has to say how to change something instead of leaving the reader to find the syntax.
+  test('bare, without a terminal, ends with how to change it', () => {
+    const r = run('settings')
+    expect(r.status).toBe(0)
+    expect(r.out).toContain('ccprovider settings set shareSessions true|false [profile]')
+  })
+
   test('a subscription profile never shares', () => {
     saveStore(paths, { version: 1, providers: { work: { kind: 'oauth', baseUrl: '', aliases: {}, preset: 'claude' } } })
     const r = run('settings', 'set', 'shareSessions', 'true', 'work')
     expect(r.status).toBe(1)
     expect(r.out).toContain('login')
+    // Nothing to drop, and a loop over every profile must not stop here.
+    expect(run('settings', 'unset', 'shareSessions', 'work').status).toBe(0)
+  })
+
+  // An empty "$PROFILE" in a script is not "no profile": it must not change every profile's default.
+  test('an empty profile name is refused, not read as the global setting', () => {
+    expect(run('settings', 'set', 'shareSessions', 'true', '').status).toBe(1)
+    expect(existsSync(join(home, 'config', 'ccprovider', 'settings.json'))).toBe(false)
+  })
+
+  test('the hint for changing a setting goes to stderr, so stdout stays the list', () => {
+    const r = spawnSync(process.execPath, [CLI, 'settings'], { env, encoding: 'utf8' })
+    const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, '')
+    expect(plain(r.stdout)).toContain('shareSessions  false')
+    expect(plain(r.stdout)).not.toContain('change:')
+    expect(plain(r.stderr)).toContain('change:')
+  })
+
+  test('setting what is already set says so instead of announcing a change', () => {
+    expect(run('settings', 'set', 'shareSessions', 'true', 'glm').out).toContain('now shares')
+    expect(run('settings', 'set', 'shareSessions', 'true', 'glm').out).toContain('already shares')
+    expect(run('settings', 'unset', 'shareSessions', 'glm').out).toContain('follows the global setting again')
+    expect(run('settings', 'unset', 'shareSessions', 'glm').out).toContain('no override of its own')
+  })
+
+  test('turning sharing on says what happens to the sessions it already has', () => {
+    const r = run('settings', 'set', 'shareSessions', 'true', 'glm')
+    expect(r.out).toContain('claude --resume')
+    expect(r.out).toContain('agents and MCP servers are unavailable')
   })
 
   test('refuses a key, a value, or arguments it does not understand', () => {

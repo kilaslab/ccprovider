@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { declaredClaudeDir, profileDir, type Paths } from './paths.js'
-import { ProfileError } from './profile.js'
-import type { Profile } from './types.js'
+import { ProfileError, getProfile, loadStore, saveStore, validateName } from './profile.js'
+import { isOauth, type Profile } from './types.js'
 
 /**
  * Install-wide settings, beside providers.json. Deliberately tiny: every knob here is one
@@ -73,4 +73,100 @@ export function sessionConfigDir(paths: Paths, name: string, profile: Profile, s
 export function configDirEnv(paths: Paths, dir: string, env: NodeJS.ProcessEnv): string | null {
   if (dir !== paths.claudeDir) return dir
   return declaredClaudeDir(env, paths.dirsRoot) === null ? null : dir
+}
+
+/** What to store on a profile for the answer to "share chat sessions?", asked on every add
+ *  and edit. `undefined` means "follow the global default".
+ *
+ *  The question starts on what the profile resolves to, so an answer that repeats it changes
+ *  nothing: the profile keeps whatever it has, a deliberate override included. An answer that
+ *  moves the profile is stored only when it differs from the default; one that lands on the
+ *  default drops the override instead. Pinned, it would make a later change to the global
+ *  setting skip the profile without anyone having chosen that. */
+export function shareOverride(answer: boolean, current: boolean | undefined, settings: Settings): boolean | undefined {
+  if (answer === (current ?? settings.shareSessions)) return current
+  return answer === settings.shareSessions ? undefined : answer
+}
+
+/** How a profile's sharing resolves, in words. Plain text: the caller decides what to dim. */
+export function describeShare(profile: Profile, settings: Settings): string {
+  if (isOauth(profile)) return 'never shares — a Claude subscription keeps its login in its own directory'
+  if (profile.shareSessions === undefined) {
+    return settings.shareSessions ? 'inherits — shares with ~/.claude' : 'inherits — isolated'
+  }
+  return profile.shareSessions ? 'shares with ~/.claude  (own override)' : 'isolated  (own override)'
+}
+
+/** What a profile leaves behind when it starts to share: its sessions stay where they were. */
+export function sessionsStayNote(paths: Paths, name: string): string {
+  return `Sessions "${name}" already has stay in ${profileDir(paths, name)} — they will not show up in \`claude --resume\` from the shared directory, and \`ccprovider usage ${name}\` still reports them.`
+}
+
+/** What a profile gives up, and leaves behind, when it starts to share. */
+export function sharingOnNotes(paths: Paths, name: string): string[] {
+  return [sessionsStayNote(paths, name), 'Per-profile agents and MCP servers are unavailable while it shares.']
+}
+
+export interface ShareChange {
+  /** False when the setting already had that value and nothing was written. */
+  changed: boolean
+  /** One line saying what is now true. Plain text. */
+  done: string
+  /** Consequences worth a second line. Plain text. */
+  notes: string[]
+}
+
+/** Set (`true`/`false`) or drop (`undefined`) one profile's own sharing override, and save.
+ *
+ *  The one writer behind `settings set|unset` and the `settings` menu, so what they refuse
+ *  and what they say cannot drift apart. */
+export function applyProfileShare(paths: Paths, name: string, value: boolean | undefined): ShareChange {
+  const key = validateName(name)
+  const store = loadStore(paths)
+  const profile = getProfile(store, key)
+  if (isOauth(profile)) {
+    // Dropping an override it can never hold is a no-op and not an error: a script that loops
+    // `unset` over every profile must not fail on the subscription one.
+    if (value === undefined) {
+      return { changed: false, done: `"${key}" is a Claude subscription profile: it never shares, so there is no override to remove.`, notes: [] }
+    }
+    throw new ProfileError(`"${key}" is a Claude subscription profile: its login lives in its own config directory, so it cannot share sessions.`)
+  }
+
+  if (value === profile.shareSessions) {
+    const done =
+      value === undefined ? `"${key}" has no override of its own; it follows the global setting.`
+      : value ? `"${key}" already shares sessions with ~/.claude`
+      : `"${key}" already has its own sessions`
+    return { changed: false, done, notes: [] }
+  }
+
+  const settings = loadSettings(paths)
+  const before = sharesSessions(profile, settings)
+  const next: Profile = { ...profile }
+  if (value === undefined) delete next.shareSessions
+  else next.shareSessions = value
+  store.providers[key] = next
+  saveStore(paths, store)
+
+  const done =
+    value === undefined ? `"${key}" follows the global setting again`
+    : value ? `"${key}" now shares sessions with ~/.claude`
+    : `"${key}" has its own sessions again`
+  return { changed: true, done, notes: !before && sharesSessions(next, settings) ? sharingOnNotes(paths, key) : [] }
+}
+
+/** Set the install-wide default and save. It only reaches profiles without an override. */
+export function applyGlobalShare(paths: Paths, value: boolean): ShareChange {
+  if (loadSettings(paths).shareSessions === value) {
+    return { changed: false, done: `shareSessions is already ${value} for profiles without an override of their own`, notes: [] }
+  }
+  saveSettings(paths, { version: 1, shareSessions: value })
+  // A subscription profile never shares, so a store of nothing else has nothing to explain.
+  const canShare = Object.values(loadStore(paths).providers).some((pr) => !isOauth(pr))
+  return {
+    changed: true,
+    done: `shareSessions is now ${value} for profiles without an override of their own`,
+    notes: value && canShare ? ['Each profile keeps the sessions it already has; what it starts from now on runs in ~/.claude.'] : [],
+  }
 }
