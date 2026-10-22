@@ -2,7 +2,8 @@ import { getPaths } from '../paths.js'
 import { loadStore, getProfile } from '../profile.js'
 import { loadSettings, sharesSessions } from '../settings.js'
 import { detectStore } from '../secrets/index.js'
-import { runDoctor, orphanChecks, defaultChecks, statuslineChecks, worstStatus, type Check } from '../doctor.js'
+import { runDoctor, orphanChecks, defaultChecks, slotChecks, statuslineChecks, worstStatus, type Check } from '../doctor.js'
+import { DEFAULT_SLOT } from '../slot.js'
 import { currentDefaultProfile } from '../shim.js'
 import { isClaude } from '../types.js'
 import { c } from '../ui.js'
@@ -43,6 +44,7 @@ export async function cmdDoctor(
   // Launchers whose profile is gone belong to no profile's report: a whole-install run only.
   if (!name) section('leftover commands', orphanChecks(paths, names))
   if (!name) section('token footer', statuslineChecks(paths))
+  if (!name || name === DEFAULT_SLOT) section('default slot', await slotChecks(paths, secrets, Object.keys(store.providers)))
   // The plain `claude` command: a whole run, or a question about the very profile it runs.
   if (!name || currentDefaultProfile(paths) === name) {
     section('default command', defaultChecks(paths, Object.keys(store.providers), process.env))

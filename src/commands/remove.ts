@@ -5,6 +5,7 @@ import { loadStore, getProfile } from '../profile.js'
 import { detectStore } from '../secrets/index.js'
 import { inspectStatusline } from '../statusline.js'
 import { removeProfile } from '../remove.js'
+import { DEFAULT_SLOT, stashedKeys } from '../defaultslot.js'
 import { p } from '../tui/prompts.js'
 import { isClaude, isClaudeToken } from '../types.js'
 import { c } from '../ui.js'
@@ -28,10 +29,13 @@ export async function cmdRemove(
   }
 
   if (!yes) {
+    const stashed = name === DEFAULT_SLOT ? stashedKeys(paths) : []
     const ok = await p.confirm({
-      message: isClaude(getProfile(store, name))
-        ? `Delete profile "${name}", its Claude ${isClaudeToken(getProfile(store, name)) ? 'token' : 'login'} and its session history?`
-        : `Delete profile "${name}", its API key and its session history?`,
+      message:
+        (isClaude(getProfile(store, name))
+          ? `Delete profile "${name}", its Claude ${isClaudeToken(getProfile(store, name)) ? 'token' : 'login'} and its session history`
+          : `Delete profile "${name}", its API key and its session history`) +
+        (stashed.length ? `, and the stashed ${stashed.join(', ')} with their keys?` : '?'),
       initialValue: false,
     })
     if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }

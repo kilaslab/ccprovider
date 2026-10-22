@@ -104,6 +104,9 @@ async function main(argv: string[]): Promise<number> {
       default: { type: 'boolean', default: false },
       // `add` without the wizard: --provider switches it off, the rest answers its questions.
       provider: { type: 'string' },
+      // `default --use <provider>` swaps to a stashed one; `--forget <provider>` drops it.
+      use: { type: 'string' },
+      forget: { type: 'string' },
       name: { type: 'string' },
       'base-url': { type: 'string' },
       'key-stdin': { type: 'boolean', default: false },
@@ -131,7 +134,7 @@ async function main(argv: string[]): Promise<number> {
 
   // An option that belongs to one command is refused on the others. Ignored without a word,
   // `usage --format json` printed the table with exit 0, and a script piped it to jq.
-  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', default: 'add', 'from-default': 'use', provider: 'add', ...Object.fromEntries(ADD_ONLY_FLAGS.map((f) => [f, 'add'])) }
+  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', default: 'add', 'from-default': 'use', provider: 'add', use: 'default', forget: 'default', ...Object.fromEntries(ADD_ONLY_FLAGS.map((f) => [f, 'add'])) }
   for (const [flag, owner] of Object.entries(OWNED)) {
     const given = (values as Record<string, unknown>)[flag]
     if (given !== undefined && given !== false && cmd !== owner) {
@@ -160,7 +163,7 @@ async function main(argv: string[]): Promise<number> {
     case 'rm': case 'remove': case 'delete': return cmdRemove(paths, secrets, requireName(name, 'rm'), values.yes)
     case 'install': return cmdInstall(paths, name ? validateName(name) : undefined)
     case 'uninstall': return cmdUninstall(paths, name ? validateName(name) : undefined, values.yes)
-    case 'default': return cmdDefault(paths, name ? validateName(name) : undefined, values.off)
+    case 'default': return cmdDefault(paths, secrets, name ? validateName(name) : undefined, { off: values.off, use: values.use, forget: values.forget })
     case 'statusline': return cmdStatusline(paths, name)
     case 'usage': return cmdUsage(paths, name ? validateName(name) : undefined, { since: values.since, by: values.by, json: values.json, rebuild: values.rebuild })
     case 'doctor': return cmdDoctor(paths, secrets, name ? validateName(name) : undefined)

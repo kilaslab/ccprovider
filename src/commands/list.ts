@@ -3,7 +3,7 @@ import { loadStore } from '../profile.js'
 import { loadSettings, sharesSessions } from '../settings.js'
 import { missingSlots } from '../launch.js'
 import { detectStore } from '../secrets/index.js'
-import { DEFAULT_SLOT } from '../defaultslot.js'
+import { DEFAULT_SLOT, stashedKeys } from '../defaultslot.js'
 import { currentDefaultProfile, inspectShim } from '../shim.js'
 import { isClaudeToken, isOauth } from '../types.js'
 import { c, type Paths } from '../ui.js'
@@ -26,12 +26,18 @@ export async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Await
     console.log('No profiles yet. Run `ccprovider add` to create one.')
     return 0
   }
+  // Under the default, the providers it stashed: not profiles, so not listed as ones.
+  const stashedLine = (n: string): string[] => {
+    const keys = n === DEFAULT_SLOT ? stashedKeys(paths) : []
+    return keys.length ? [`  ${c.dim(`stashed: ${keys.join(', ')}  — \`ccprovider default --use <name>\``)}`] : []
+  }
   for (const n of names) {
     const pr = store.providers[n]!
     if (isOauth(pr)) {
       console.log(`${c.bold(n.padEnd(14))} ${c.green('Claude subscription')}`)
       console.log(`  ${c.dim('own login in its profile directory — /login on first launch')}`)
       console.log(commandLine(paths, n))
+      for (const line of stashedLine(n)) console.log(line)
       continue
     }
     const hasKey = (await secrets.get(n)) != null
@@ -44,6 +50,7 @@ export async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Await
       console.log(c.dim(`shared with ${paths.claudeDir} — sessions and todos${isClaudeToken(pr) ? '' : ', and credentials,'} are the plain claude's`))
     }
     console.log(commandLine(paths, n))
+    for (const line of stashedLine(n)) console.log(line)
     if (token) continue
     const a = pr.aliases
     const pair = (x?: string, y?: string) => (x === y ? (x ?? '—') : `${x ?? '—'} / ${y ?? '—'}`)

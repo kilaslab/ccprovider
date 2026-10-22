@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { profileDir, type Paths } from './paths.js'
 import { assertNotReserved, getProfile, ProfileError, saveStore, validateName } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
+import { DEFAULT_SLOT, slotInUse } from './slot.js'
 import { shellQuote } from './shell.js'
 import { commandName, inspectShim, installDefaultShim, installShim, readDefaultShimInfo, removeShim } from './shim.js'
 import type { Profile, ProfileStore } from './types.js'
@@ -48,6 +49,11 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
   const to = assertNotReserved(toRaw)
   const profile = getProfile(store, from)
   if (from === to) throw new ProfileError(`"${from}" is already called that.`)
+  // Once it has been the slot, "default" is a role and not just a name: what it stashed is filed
+  // under it, and `claude` runs it by that name.
+  if (from === DEFAULT_SLOT && slotInUse(paths)) {
+    throw new ProfileError('"default" is the profile behind the plain `claude` and has stashed providers, so it cannot be renamed. `ccprovider add --default` changes what it runs; `ccprovider rm default` removes it.')
+  }
   if (Object.hasOwn(store.providers, to)) throw new ProfileError(`A profile named "${to}" already exists.`)
 
   const dirFrom = profileDir(paths, from)
