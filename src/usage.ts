@@ -554,8 +554,28 @@ export function renderUsage(rows: UsageRow[], opts: { subscription: Set<string>;
   const profiles = [...new Set(rows.map((r) => r.profile))]
   const withDay = rows.some((r) => r.day !== undefined)
 
+  // A profile that is a Claude subscription now may have been a provider before: `add --default`
+  // keeps the slot's directory, so its transcripts and its ledger go on across the change. Its
+  // rows are told apart by model, because the label says who bills them. A heuristic, and it
+  // has a hole: a provider can answer under a Claude name (docs/usage.md: Z.ai does), and those
+  // calls land under "Claude subscription". The other direction is certain — a subscription only
+  // produces Claude models, so any other model in it came from an earlier provider. A provider
+  // profile's rows stay as they are, unlabelled.
+  const isClaudeModel = (model: string) => /^claude-/i.test(model)
+  const groups: Array<{ profile: string; mine: UsageRow[]; note: string }> = []
   for (const profile of profiles) {
-    const mine = rows.filter((r) => r.profile === profile)
+    const all = rows.filter((r) => r.profile === profile)
+    if (!opts.subscription.has(profile)) {
+      groups.push({ profile, mine: all, note: '' })
+      continue
+    }
+    const claude = all.filter((r) => isClaudeModel(r.model))
+    const other = all.filter((r) => !isClaudeModel(r.model))
+    if (claude.length) groups.push({ profile, mine: claude, note: '  Claude subscription' })
+    if (other.length) groups.push({ profile, mine: other, note: '  not Claude models — from an earlier provider' })
+  }
+
+  for (const { profile, mine, note } of groups) {
     // What each printed line is, and which rows its hit rate is taken over.
     const entries: Array<{ row: UsageRow; of: UsageRow[]; total: boolean }> = mine.map((row) => ({ row, of: [row], total: false }))
     if (mine.length > 1 && !withDay) {
@@ -592,7 +612,7 @@ export function renderUsage(rows: UsageRow[], opts: { subscription: Set<string>;
     const textCols = withDay ? 2 : 1
     const fmt = (cells: string[]) => cells.map((c, i) => (i < textCols ? c.padEnd(widths[i]!) : c.padStart(widths[i]!))).join('  ')
 
-    lines.push(`${bold(profile)}${opts.subscription.has(profile) ? dim('  Claude subscription') : ''}`)
+    lines.push(`${bold(profile)}${note ? dim(note) : ''}`)
     lines.push(dim(`  ${fmt(header)}`))
     body.forEach((cells, i) => lines.push(`  ${entries[i]!.total ? dim(fmt(cells)) : fmt(cells)}`))
     lines.push('')

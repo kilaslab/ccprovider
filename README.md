@@ -221,8 +221,9 @@ ccprovider settings unset shareSessions glm         # glm follows the default ag
 ```
 
 A sharing profile runs in `~/.claude` itself, so its new sessions, `--resume` history and
-todos are the plain `claude`'s. A Claude subscription profile never shares: its login
-lives in its own directory, and sharing would put it next to everyone else's sessions.
+todos are the plain `claude`'s. A Claude subscription profile signed in with `/login` never
+shares: its login lives in its own directory, and sharing would put it next to everyone else's
+sessions. One signed in with a setup-token can, since its credential is not in a directory.
 While a profile shares it has no agents or MCP servers of its own to install. Sessions it
 had before stay in its own directory; `ccprovider usage glm` still reports them.
 
@@ -318,6 +319,28 @@ Code keeps that profile's login (`.credentials.json`, or a Keychain entry keyed 
 directory on macOS) apart from `~/.claude` and every other profile. Run the profile, type
 `/login` once, and both accounts stay signed in side by side. It stores no API key and has
 no endpoint or model mapping; `ccprovider doctor` skips those checks for it.
+
+#### Claude subscription (setup-token)
+
+The other Claude option signs in with a long-lived token instead of `/login`. Run
+`claude setup-token` once, pick **Claude subscription (setup-token)** in `ccprovider add`, and
+paste the token. It is kept in your Keychain (or the other secret store `doctor` names) like an
+API key and handed to Claude Code as `CLAUDE_CODE_OAUTH_TOKEN`; it goes to Anthropic and nowhere
+else, and a provider profile still strips any such token from its environment.
+
+Because the credential is in the environment and not in a config directory, this kind **can
+share chat sessions** with the plain `claude` (`add` and `edit` ask; `ccprovider settings` flips
+it later). A `/login` profile cannot: its login lives in its own directory.
+
+### One default, replaced in place
+
+```bash
+ccprovider add --default     # pick any provider; it is written as the profile "default"
+```
+
+`add --default` skips the name question and writes a single profile called `default`, then makes
+the plain `claude` run it. Run it again with another provider and the profile is overwritten
+rather than a new one added: its key and settings are swapped, and its session history is kept.
 
 ### OpenAI-compatible endpoints
 
@@ -592,9 +615,10 @@ providers like DeepSeek and OpenRouter document Claude Code as a client of their
 Anthropic-compatible endpoints. In this mode no request reaches Anthropic.
 
 Don't do the reverse: piping Claude subscription credentials into third-party tools is
-what actually violates the terms. A Claude subscription profile does not do that. It
+what actually violates the terms. A Claude subscription profile does not do that. A `/login` one
 never reads or moves the login, it only gives Claude Code its own config directory to
-sign in to. Use it with accounts that are yours to use.
+sign in to. A setup-token one reads the token you pasted from the secret store and hands it
+to Claude Code, which sends it to Anthropic and nowhere else. Use it with accounts that are yours to use.
 
 </details>
 

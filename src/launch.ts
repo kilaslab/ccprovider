@@ -1,6 +1,6 @@
 import type { Profile, AliasSlot } from './types.js'
 import { findOnPath, isDefaultWrapper } from './shim.js'
-import { TIERS, REQUIRED_SLOTS, OPUSPLAN } from './types.js'
+import { TIERS, REQUIRED_SLOTS, OPUSPLAN, isClaude, isClaudeToken } from './types.js'
 
 /** Env var Claude Code reads for each alias slot. */
 export const SLOT_ENV: Record<AliasSlot, string> = {
@@ -84,6 +84,9 @@ export const MANAGED_VARS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_MODEL',
   ...Object.values(SLOT_ENV),
+  // Set only for a claude-token profile; cleared for every other kind so a token exported in
+  // the shell never reaches a provider (STRIPPED_VARS) or rides along unasked.
+  'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
   'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
   'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
@@ -160,7 +163,7 @@ export function startChoiceOf(profile: Profile): 'opus' | 'sonnet' | 'opusplan' 
 /** Slots a session can request that this profile leaves unmapped. Each one is a
  *  request that would go out carrying a Claude model ID the provider does not have. */
 export function missingSlots(profile: Profile): AliasSlot[] {
-  if (profile.kind === 'oauth') return []
+  if (isClaude(profile)) return []
   return REQUIRED_SLOTS.filter((s) => !profile.aliases[s])
 }
 
@@ -186,6 +189,12 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
   // directory, so nothing else is injected — the strip pass above already removed
   // anything inherited that would compete with that login.
   if (profile.kind === 'oauth') return env
+  // A setup-token subscription: the token is the whole credential, and it goes to Anthropic
+  // only. No base URL, model or tool-search settings — this is stock Claude Code.
+  if (isClaudeToken(profile)) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = apiKey
+    return env
+  }
 
   env.ANTHROPIC_BASE_URL = profile.baseUrl
   env.ANTHROPIC_AUTH_TOKEN = apiKey
@@ -227,7 +236,7 @@ export function buildEnv(opts: LaunchOptions): Record<string, string> {
 export function describeEnv(env: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of [...MANAGED_VARS, ...PROVIDER_VARS]) {
-    if (k in env) out[k] = k === 'ANTHROPIC_AUTH_TOKEN' ? redact(env[k]!) : env[k]!
+    if (k in env) out[k] = k === 'ANTHROPIC_AUTH_TOKEN' || k === 'CLAUDE_CODE_OAUTH_TOKEN' ? redact(env[k]!) : env[k]!
   }
   return out
 }

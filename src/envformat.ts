@@ -1,5 +1,5 @@
 import { ProfileError } from './profile.js'
-import { CREDENTIAL_VARS } from './launch.js'
+import { CREDENTIAL_VARS, MANAGED_VARS } from './launch.js'
 import { shellQuote } from './shell.js'
 
 export const ENV_FORMATS = ['sh', 'dotenv', 'json'] as const
@@ -42,7 +42,13 @@ export function formatEnv(env: Record<string, string>, format: EnvFormat): strin
   // carries an empty value, which was checked to leave routing as it should be.
   const stray = CREDENTIAL_VARS.filter((v) => !Object.hasOwn(env, v))
 
-  if (format === 'sh') return all.map(([k, v]) => `export ${k}=${shellQuote(v)}\n`).join('') + stray.map((v) => `unset ${v}\n`).join('')
+  // A shell can also delete what `use` deletes of the rest of the managed namespace (not the
+  // config dir: whether to set it is decided per profile, and a shared one leaves it alone; and
+  // not ENABLE_TOOL_SEARCH, which a subscription profile leaves to the user's own value). Without it,
+  // `eval` of a subscription profile after a provider's would keep the provider's base URL,
+  // token and model variables, and Claude Code would keep talking to the provider.
+  const clear = [...new Set<string>([...stray, ...MANAGED_VARS.filter((v) => !HOST_ONLY.has(v) && !Object.hasOwn(env, v))])]
+  if (format === 'sh') return all.map(([k, v]) => `export ${k}=${shellQuote(v)}\n`).join('') + clear.map((v) => `unset ${v}\n`).join('')
   for (const v of stray) all.push([v, ''])
 
   const portable = all.filter(([k]) => !HOST_ONLY.has(k))

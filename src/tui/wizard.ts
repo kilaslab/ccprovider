@@ -8,7 +8,8 @@ import { AGENT_CATALOG, AGENT_SOURCE, listInstalled, readExplore } from '../agen
 import { startChoiceOf } from '../launch.js'
 import { loadSettings, shareOverride, sharesSessions } from '../settings.js'
 import { profileDir } from '../paths.js'
-import { OPUSPLAN, type Profile, type Preset } from '../types.js'
+import { DEFAULT_SLOT } from '../defaultslot.js'
+import { OPUSPLAN, isOauth, looksLikeSetupToken, type AliasSlot, type Profile, type Preset } from '../types.js'
 import type { Paths } from '../paths.js'
 
 export interface WizardResult {
@@ -31,14 +32,36 @@ export interface EditInstead {
 }
 
 const CLAUDE_CHOICE = 'claude'
+const CLAUDE_TOKEN_CHOICE = 'claude-token'
+
+export interface WizardOpts {
+  /** Write the fixed `default` profile instead of asking for a name. Nothing is a name
+   *  clash then: the caller overwrites whatever is in the slot. */
+  slot?: boolean
+  /** What the slot holds now, so the questions that have a stored answer (sharing) start from
+   *  it and not from the global default. Only read in slot mode: nothing is being edited. */
+  current?: Profile
+}
 
 export async function runWizard(
   paths: Paths,
   existing: { name: string; profile: Profile; apiKey: string | null } | null,
   takenNames: string[],
   refresh = false,
+  opts: WizardOpts = {},
 ): Promise<WizardResult | EditInstead> {
-  p.intro(existing ? `Edit profile "${existing.name}"` : 'Add a Claude Code provider')
+  const slot = opts.slot === true
+  // The profile whose stored answers the questions start from: the one being edited, or the
+  // slot's current occupant. A `/login` occupant has nothing to start from: it never shares,
+  // so its "No" would be pinned onto the new profile as an override nobody chose.
+  const seed = existing?.profile ?? (slot && opts.current && !isOauth(opts.current) ? opts.current : undefined)
+  // The profile whose directory this one will use: the slot keeps its directory across a
+  // change of provider, so the agents, Explore model and MCP choice in it are the starting point.
+  const kept = existing ?? (slot && opts.current ? { profile: opts.current } : null)
+  p.intro(
+    slot ? `Set the default \`claude\`${takenNames.includes(DEFAULT_SLOT) ? ' (replaces the current default profile)' : ''}`
+    : existing ? `Edit profile "${existing.name}"` : 'Add a Claude Code provider',
+  )
 
   // ---- 1. provider
   const presetId = existing?.profile.preset
@@ -48,21 +71,29 @@ export async function runWizard(
           message: 'Provider',
           options: [
             { value: CLAUDE_CHOICE, label: 'Claude subscription', hint: 'another Claude login, signed in with /login' },
+            // Not for an edit: this select only shows for a profile with no preset, and
+            // turning its provider key into a Claude token would send that key to Anthropic.
+            ...(existing ? [] : [{ value: CLAUDE_TOKEN_CHOICE, label: 'Claude subscription (setup-token)', hint: 'paste the token from `claude setup-token`; can share sessions' }]),
             ...PRESETS.map((x) => ({ value: x.id, label: x.label })),
           ],
         }),
       )
+  if (presetId === CLAUDE_TOKEN_CHOICE) return runTokenWizard(paths, existing, kept, seed, takenNames, slot)
   if (!existing && presetId === CLAUDE_CHOICE) {
-    const picked = await chooseName(takenNames, 'work')
+    const picked = await pickName(slot, takenNames, 'work')
     if ('editInstead' in picked) return picked
     const { name, replace } = picked
+    const agents = await chooseAgents(null)
+    const explore = await chooseExplore({}, null)
+    // A replacement and the slot both overwrite something that exists: say so before saving.
+    if (slot || replace) await confirmSave(name, replace, slot, takenNames)
     return {
       name,
       profile: { kind: 'oauth', baseUrl: '', aliases: {}, preset: CLAUDE_CHOICE, createdAt: new Date().toISOString() },
       apiKey: null,
-      agents: await chooseAgents(null),
-      explore: await chooseExplore({}, null),
-      replace: replace && (orCancel(await p.confirm({ message: saveMessage(name, true), initialValue: true })) || exitUnsaved()),
+      agents,
+      explore,
+      replace,
     }
   }
   const preset = findPreset(presetId as string)
@@ -73,7 +104,7 @@ export async function runWizard(
   if (existing) {
     name = existing.name
   } else {
-    const picked = await chooseName(takenNames, presetId as string, presetId as string)
+    const picked = await pickName(slot, takenNames, presetId as string, presetId as string)
     if ('editInstead' in picked) return picked
     ;({ name, replace } = picked)
   }
@@ -189,29 +220,13 @@ export async function runWizard(
   // ---- 8. effort
   const effortLevel = existing?.profile.effortLevel ?? preset?.effortLevel ?? null
 
-  // ---- 9. chat sessions: asked before MCP and agents because a profile that shares runs in
-  // ~/.claude and has no config directory of its own to put either in. Starts on what the
-  // profile gets today — No for a new one while the global default is off.
-  const settings = loadSettings(paths)
-  const shares = orCancel(
-    await p.confirm({
-      message: 'Share chat sessions with the plain claude?  (no agents or MCP servers of its own)',
-      initialValue: existing ? sharesSessions(existing.profile, settings) : settings.shareSessions,
-    }),
+  // ---- 9. chat sessions, then the provider's own MCP servers, the agents and the model Explore
+  // runs on.
+  // MCP server IDs belong to one provider: another provider's choice is not carried over.
+  const mcpFrom = existing?.profile ?? (kept?.profile.preset === presetId ? kept.profile : undefined)
+  const { shares, shareSessions, mcp, agents, explore } = await askOwnConfig(
+    paths, name, kept, seed, aliases, mcpFrom, () => chooseMcp(preset, baseUrl, mcpFrom),
   )
-
-  // ---- 10. the provider's own MCP servers, the agents, and the model Explore runs on.
-  // None of it is asked while the profile shares: the caller installs nothing then, so what
-  // the profile has now is handed back as it was.
-  const dir = profileDir(paths, name)
-  const ownAgents = existing ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : []
-  // A profile that shared has no agents of its own to start from: offer the recommended set, as for a new one.
-  const installedAgents = existing && (ownAgents.length || !sharesSessions(existing.profile, settings)) ? ownAgents : null
-  const currentExplore = existing ? (readExplore(dir)?.model ?? null) : null
-  const mcp = shares ? existing?.profile.mcp : await chooseMcp(preset, baseUrl, existing?.profile)
-  const agents = shares ? (installedAgents ?? []) : await chooseAgents(installedAgents)
-  const explore = shares ? currentExplore : await chooseExplore(aliases, currentExplore)
-  const shareSessions = shareOverride(shares, existing?.profile.shareSessions, settings)
 
   const profile: Profile = {
     baseUrl,
@@ -249,9 +264,135 @@ export async function runWizard(
     name,
   )
 
-  const ok = orCancel(await p.confirm({ message: saveMessage(name, replace), initialValue: true }))
-  if (!ok) { p.cancel('Nothing was saved.'); process.exit(1) }
+  await confirmSave(name, replace, slot, takenNames)
+  return { name, profile, apiKey, agents, explore, replace }
+}
 
+/** The new profile's name, or the slot's fixed one: `add --default` never asks, and never
+ *  treats a taken name as a clash, because the caller overwrites whatever is in the slot. */
+function pickName(slot: boolean, takenNames: string[], placeholder: string, fallback?: string): Promise<{ name: string; replace: boolean } | EditInstead> {
+  return slot ? Promise.resolve({ name: DEFAULT_SLOT, replace: false }) : chooseName(takenNames, placeholder, fallback)
+}
+
+/** The last question before anything is written. */
+async function confirmSave(name: string, replace: boolean, slot: boolean, takenNames: string[]): Promise<void> {
+  const ok = orCancel(await p.confirm({ message: slot ? slotSaveMessage(takenNames) : saveMessage(name, replace), initialValue: true }))
+  if (!ok) exitUnsaved()
+}
+
+interface OwnConfigAnswers {
+  shares: boolean
+  /** What to store on the profile (see `shareOverride`): undefined means follow the global default. */
+  shareSessions: boolean | undefined
+  mcp: string[] | undefined
+  agents: string[]
+  explore: string | null
+}
+
+/**
+ * The questions both wizards end on: whether the profile shares chat sessions with the plain
+ * `claude`, then — only if it does not — its MCP servers, agents and Explore model. They are
+ * asked together because a profile that shares runs in ~/.claude and has no config directory of
+ * its own to put any of it in; what it has now is handed back as it was.
+ *
+ * The sharing question starts on what `seed` gets today (the profile being edited, or the slot's
+ * current occupant), and on the global default for a new one.
+ */
+async function askOwnConfig(
+  paths: Paths,
+  name: string,
+  kept: { profile: Profile } | null,
+  seed: Profile | undefined,
+  aliases: Partial<Record<AliasSlot, string>>,
+  mcpFrom: Profile | undefined,
+  askMcp?: () => Promise<string[] | undefined>,
+): Promise<OwnConfigAnswers> {
+  const settings = loadSettings(paths)
+  const shares = orCancel(
+    await p.confirm({
+      message: 'Share chat sessions with the plain claude?  (no agents or MCP servers of its own)',
+      initialValue: seed ? sharesSessions(seed, settings) : settings.shareSessions,
+    }),
+  )
+
+  const dir = profileDir(paths, name)
+  const ownAgents = kept ? listInstalled(dir).filter((a) => a.known).map((a) => a.id) : []
+  // A profile that shared has no agents of its own to start from: offer the recommended set, as for a new one.
+  const installedAgents = kept && (ownAgents.length || !sharesSessions(kept.profile, settings)) ? ownAgents : null
+  const currentExplore = kept ? (readExplore(dir)?.model ?? null) : null
+  return {
+    shares,
+    shareSessions: shareOverride(shares, seed?.shareSessions, settings),
+    mcp: shares ? mcpFrom?.mcp : await askMcp?.(),
+    agents: shares ? (installedAgents ?? []) : await chooseAgents(installedAgents),
+    explore: shares ? currentExplore : await chooseExplore(aliases, currentExplore),
+  }
+}
+
+function slotSaveMessage(takenNames: string[]): string {
+  return takenNames.includes(DEFAULT_SLOT)
+    ? 'Save as the default, replacing the existing profile named "default"? Its sessions stay; its key, settings and any /login are replaced.'
+    : 'Save as the default profile?'
+}
+
+/**
+ * A Claude subscription signed in with a `claude setup-token` token. The token is kept like
+ * an API key and handed to Claude Code as CLAUDE_CODE_OAUTH_TOKEN, so — unlike a `/login`
+ * profile — nothing of the credential sits in a config directory and the profile may share
+ * sessions with the plain `claude`.
+ */
+async function runTokenWizard(
+  paths: Paths,
+  existing: { name: string; profile: Profile; apiKey: string | null } | null,
+  kept: { profile: Profile } | null,
+  seed: Profile | undefined,
+  takenNames: string[],
+  slot: boolean,
+): Promise<WizardResult | EditInstead> {
+  let name: string
+  let replace = false
+  if (existing) {
+    name = existing.name
+  } else {
+    const picked = await pickName(slot, takenNames, 'personal')
+    if ('editInstead' in picked) return picked
+    ;({ name, replace } = picked)
+  }
+
+  p.log.info('Run `claude setup-token` in another terminal, sign in, and paste the token it prints.')
+  const entered = orCancel(
+    await p.password({
+      message: existing?.apiKey ? 'Setup token (blank keeps the current one)' : 'Setup token',
+      mask: '•',
+      validate: (v) => ((v ?? '').trim() || existing?.apiKey ? undefined : 'Required'),
+    }),
+  ).trim()
+  const apiKey = entered || existing!.apiKey!
+  if (!looksLikeSetupToken(apiKey)) {
+    p.log.warn('That does not look like a setup-token token (they start with sk-ant-oat). Saving it anyway.')
+  }
+
+  const { shares, shareSessions, agents, explore } = await askOwnConfig(paths, name, kept, seed, {}, undefined)
+
+  const profile: Profile = {
+    kind: 'claude-token',
+    baseUrl: '',
+    aliases: {},
+    preset: CLAUDE_TOKEN_CHOICE,
+    ...(shareSessions !== undefined ? { shareSessions } : {}),
+    createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
+  }
+
+  p.note(
+    [
+      'login      Claude subscription, setup-token',
+      `sessions   ${shares ? 'shared with ~/.claude' : 'its own directory'}`,
+      ...(shares ? [] : [`agents     ${agents.length ? agents.join(', ') : 'none'}`, `explore    ${explore ?? 'built-in, on the session model'}`]),
+    ].join('\n'),
+    name,
+  )
+
+  await confirmSave(name, replace, slot, takenNames)
   return { name, profile, apiKey, agents, explore, replace }
 }
 
