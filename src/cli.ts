@@ -19,11 +19,12 @@ import { aggregate, ledgerPath, parseSince, prepareLedger, progressPercent, rend
 import { runDoctor, orphanChecks, defaultChecks, statuslineChecks, worstStatus, type Check } from './doctor.js'
 import { claudeRunner, readInstalledMcp, resolveServers, resolveUnwanted, syncMcp } from './mcp.js'
 import { findPreset } from './presets.js'
+import { DEFAULT_SLOT, assertSlotWritable, saveDefaultSlot } from './defaultslot.js'
 import { removeProfile } from './remove.js'
 import { renameProfile } from './rename.js'
 import { binDirOnPath, currentDefaultProfile, inspectDefaultShim, inspectShim, installCommandFor, installDefaultShim, listShims, removeDefaultShim, removeShim, selfLauncher, type DefaultShimStatus } from './shim.js'
 import { p } from './tui/prompts.js'
-import { isOauth, type Profile } from './types.js'
+import { isClaude, isClaudeToken, isOauth, type Profile } from './types.js'
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -36,6 +37,7 @@ const c = {
 const USAGE = `${c.bold('ccprovider')} — run Claude Code against any Anthropic-compatible provider
 
   ${c.bold('ccprovider add')}                      set up a provider profile
+  ${c.bold('ccprovider add --default')}            set up the profile behind the plain  claude , replacing the current default
   ${c.bold('ccprovider ls')}                       list profiles
   ${c.bold('ccprovider use')} <name> [-m tier]     launch Claude Code with that profile
   ${c.bold('ccprovider edit')} <name>              change a profile
@@ -67,6 +69,8 @@ Options
   --refresh               re-fetch the provider's model list
   --no-install            with add: do not install the profile as a command
   --no-statusline         with add: do not offer the token footer
+  --default               with add: write the single "default" profile (overwritten in place)
+                          and make it the plain  claude  command
   --off                   with default: stop overriding  claude
   --since <7d|YYYY-MM-DD> with usage: only calls from then on
   --by day                with usage: one row per day
@@ -105,6 +109,7 @@ async function main(argv: string[]): Promise<number> {
       // this tool's floor, and the flag is only ever meant negatively.
       'no-install': { type: 'boolean', default: false },
       'no-statusline': { type: 'boolean', default: false },
+      default: { type: 'boolean', default: false },
       // Written into the default wrapper, not typed: see cmdUse.
       'from-default': { type: 'boolean', default: false },
     },
@@ -116,7 +121,7 @@ async function main(argv: string[]): Promise<number> {
 
   // An option that belongs to one command is refused on the others. Ignored without a word,
   // `usage --format json` printed the table with exit 0, and a script piped it to jq.
-  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', 'from-default': 'use' }
+  const OWNED: Record<string, string> = { format: 'env', since: 'usage', by: 'usage', json: 'usage', rebuild: 'usage', off: 'default', 'no-statusline': 'add', default: 'add', 'from-default': 'use' }
   for (const [flag, owner] of Object.entries(OWNED)) {
     const given = (values as Record<string, unknown>)[flag]
     if (given !== undefined && given !== false && cmd !== owner) {
@@ -129,7 +134,14 @@ async function main(argv: string[]): Promise<number> {
   const secrets = await detectStore()
 
   switch (cmd) {
-    case 'add': return cmdAdd(paths, secrets, values.refresh, !values['no-install'], !values['no-statusline'])
+    case 'add':
+      if (values.default && values['no-install']) {
+        console.error('--no-install does not apply with --default: the default `claude` is never installed as a command of its own.')
+        return 1
+      }
+      return values.default
+        ? cmdAddDefault(paths, secrets, values.refresh, !values['no-statusline'])
+        : cmdAdd(paths, secrets, values.refresh, !values['no-install'], !values['no-statusline'])
     case 'ls': case 'list': return cmdList(paths, secrets)
     case 'use': return cmdUse(paths, secrets, requireName(name, 'use'), values.model ?? null, passthrough, values['from-default'])
     case 'edit': return cmdEdit(paths, secrets, requireName(name, 'edit'), values.refresh)
@@ -194,23 +206,41 @@ function pathHint(paths: Paths): string[] {
   ]
 }
 
-/** Bring the profile's Claude config in line with its enabled MCP servers. `previous`
+/** What a profile had before it was saved again, so what the new answers switch off, or a
+ *  different provider's servers, can be taken away. Absent fields mean "nothing before". */
+interface PreviousConfig {
+  mcp?: string[]
+  preset?: string
+}
+
+/** Bring the profile's Claude config in line with its enabled MCP servers. `before`
  *  is what was enabled before, so servers the user just switched off can be removed.
- *  Like the command, this only ever warns. Not for a profile that shares its config
- *  directory: it has nowhere of its own to register them, and `setupOwnConfig` skips this. */
-function setupMcp(paths: Paths, name: string, profile: Profile, previous: string[]): string[] {
+ *  Like the command, this only ever warns. A profile that shares its config directory has
+ *  nowhere of its own to register servers, so `setupOwnConfig` calls it with `removeOnly`: only
+ *  a provider that was switched away from loses its servers. */
+function setupMcp(paths: Paths, name: string, profile: Profile, before: PreviousConfig, removeOnly = false): string[] {
+  const previous = before.mcp ?? []
   const preset = profile.preset ? findPreset(profile.preset) : undefined
-  if (!preset?.mcp) return []
-  const enabled = profile.mcp ?? []
-  const { region, servers: wanted } = resolveServers(profile, preset)
+  const oldPreset = (before.preset ?? profile.preset) ? findPreset((before.preset ?? profile.preset)!) : undefined
+  // The provider changed under a kept directory (`add --default`): everything the old one
+  // registered goes, whatever the new profile enables, and it is recognised by the old preset's
+  // definitions. Its helpers read this profile's key, which now belongs to someone else.
+  const switched = oldPreset?.id !== preset?.id
+  const enabled = preset?.mcp ? (profile.mcp ?? []) : []
+  const resolved = preset?.mcp ? resolveServers(profile, preset) : null
+  // A profile that shares has nowhere of its own to register servers, but a provider that
+  // was switched away from must still lose its own: they are kept in a directory the profile
+  // goes back to the day it stops sharing.
+  const wanted = removeOnly ? [] : (resolved?.servers ?? [])
 
   // Servers to take away: those just switched off — and, when the endpoint is outside
   // every known region, everything enabled. A definition registered for the provider's
   // MCP host has a header helper that sends this profile's key there, which is right for
   // the provider's own endpoint and a leak for a gateway.
-  const drop = new Set(previous.filter((id) => !enabled.includes(id)))
-  if (!region) for (const id of enabled) drop.add(id)
-  const unwanted = resolveUnwanted([...drop], preset)
+  const unwanted = removeOnly && !switched ? [] : [
+    ...resolveUnwanted(switched ? previous : previous.filter((id) => !enabled.includes(id)), switched ? oldPreset : preset),
+    ...(!removeOnly && resolved && !resolved.region ? resolveUnwanted(enabled, preset) : []),
+  ]
   if (!wanted.length && !unwanted.length) return []
 
   const dir = profileDir(paths, name)
@@ -251,12 +281,36 @@ async function setupOwnConfig(
   name: string,
   profile: Profile,
   answers: { agents: string[]; explore: string | null },
-  previousMcp: string[],
+  previous: PreviousConfig = {},
 ): Promise<string[]> {
   if (sharesSessions(profile, loadSettings(paths))) {
-    return [c.dim('  Shares sessions with ~/.claude: no agents or MCP servers of its own while it does.')]
+    return [
+      ...setupMcp(paths, name, profile, previous, true),
+      c.dim('  Shares sessions with ~/.claude: no agents or MCP servers of its own while it does.'),
+    ]
   }
-  return [...setupMcp(paths, name, profile, previousMcp), ...(await setupAgents(paths, name, profile, answers.agents, answers.explore))]
+  return [...setupMcp(paths, name, profile, previous), ...(await setupAgents(paths, name, profile, answers.agents, answers.explore))]
+}
+
+/** What follows saving a profile in `add`, `add --default` and `edit`: link its shared config into
+ *  its own directory, then set up its MCP servers, agents and Explore model there. A profile that
+ *  shares runs in ~/.claude, which is the link source itself and never its own directory, so
+ *  neither is done. `previous` is what the profile had before, so what the new answers switch
+ *  off (or a different provider's servers) can be taken away. */
+async function settleProfile(
+  paths: Paths,
+  name: string,
+  profile: Profile,
+  answers: { agents: string[]; explore: string | null },
+  previous: PreviousConfig = {},
+): Promise<string[]> {
+  if (!sharesSessions(profile, loadSettings(paths))) reconcileLinks(profileDir(paths, name), paths.claudeDir)
+  return setupOwnConfig(paths, name, profile, answers, previous)
+}
+
+/** The line to say after adding a `/login` profile, whose first launch needs the login. */
+function loginHint(who: string): string {
+  return c.dim(`  First launch: type /login inside Claude Code and sign in with the account for ${who}.`)
 }
 
 function agentLine(r: AgentResult): string {
@@ -365,11 +419,8 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   store.providers[result.name] = result.profile
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(result.name, result.apiKey)
-  const dir = profileDir(paths, result.name)
-  // A profile that shares runs in ~/.claude and never uses this directory.
-  if (!sharesSessions(result.profile, loadSettings(paths))) reconcileLinks(dir, paths.claudeDir)
 
-  for (const line of await setupOwnConfig(paths, result.name, result.profile, result, [])) console.log(line)
+  for (const line of await settleProfile(paths, result.name, result.profile, result)) console.log(line)
   for (const line of await offerStatusline(paths, statusline)) console.log(line)
   const installed = install ? installCommand(paths, result.name, { automatic: true }) : null
   if (installed) {
@@ -379,14 +430,38 @@ async function cmdAdd(paths: Paths, secrets: Secrets, refresh: boolean, install:
   // Only promise the short form when it will actually work: a command that was skipped,
   // is off PATH, or is shadowed would launch something else.
   const use = c.bold(`ccprovider use ${result.name}`)
-  if (isOauth(result.profile)) {
-    console.log(c.dim(`  First launch: type /login inside Claude Code and sign in with the account for "${result.name}".`))
-  }
+  if (isOauth(result.profile)) console.log(loginHint(`"${result.name}"`))
   p.outro(
     installed?.usable ? `Saved. Launch it with  ${c.bold(result.name)}  or  ${use}`
     : install ? `Saved. Launch it with  ${use}`
     : `Saved. Launch it with  ${use}   (\`ccprovider install ${result.name}\` makes it a command)`,
   )
+  return 0
+}
+
+/** `add --default`: the one profile behind the plain `claude`, overwritten in place. Picking a
+ *  new default replaces the old one instead of adding a profile, and the slot's directory (so
+ *  its session history) is kept across the switch. */
+async function cmdAddDefault(paths: Paths, secrets: Secrets, refresh: boolean, statusline: boolean): Promise<number> {
+  const store = loadStore(paths)
+  // Before the wizard, so a `claude` that is not ours does not cost a filled-in form.
+  assertSlotWritable(paths)
+  const current = Object.hasOwn(store.providers, DEFAULT_SLOT) ? store.providers[DEFAULT_SLOT] : undefined
+  const { runWizard } = await import('./tui/wizard.js')
+  const result = await runWizard(paths, null, Object.keys(store.providers), refresh, { slot: true, current })
+  if ('editInstead' in result) return 1
+
+  const saved = await saveDefaultSlot({ paths, secrets }, result.profile, result.apiKey, selfLauncher())
+  for (const w of saved.warnings) console.error(c.yellow(`! ${w}`))
+  for (const n of saved.notes) console.log(c.dim(`  ${n}`))
+
+  for (const line of await settleProfile(paths, DEFAULT_SLOT, result.profile, result, current)) console.log(line)
+  for (const line of await offerStatusline(paths, statusline)) console.log(line)
+
+  console.log(`${c.green('✓')} \`claude\` now runs the "${DEFAULT_SLOT}" profile  ${c.dim(saved.shim.path)}${saved.previous ? c.dim('  (replaced the previous default)') : ''}`)
+  await offerDefaultPath(paths)
+  if (isOauth(result.profile)) console.log(loginHint('the default'))
+  p.outro('Saved. Run  claude  from a new shell.')
   return 0
 }
 
@@ -408,9 +483,7 @@ async function cmdEdit(paths: Paths, secrets: Secrets, name: string, refresh: bo
   saveStore(paths, store)
   if (result.apiKey) await secrets.set(name, result.apiKey)
   const shared = sharesSessions(updated, settings)
-  // The shared dir is the symlink source itself; linking it to itself is not a thing.
-  if (!shared) reconcileLinks(profileDir(paths, name), paths.claudeDir)
-  for (const line of await setupOwnConfig(paths, name, updated, result, profile.mcp ?? [])) console.log(line)
+  for (const line of await settleProfile(paths, name, updated, result, profile)) console.log(line)
   // Said once, here, because the sessions it already has are the surprise: they stay behind.
   if (shared && !sharesSessions(profile, settings)) console.log(c.dim(`  ${sessionsStayNote(paths, name)}`))
   p.outro('Updated.')
@@ -559,10 +632,15 @@ async function cmdDefault(paths: Paths, name: string | undefined, off: boolean):
   getProfile(loadStore(paths), name)
   const r = installDefaultShim(paths, name, selfLauncher())
   console.log(`${c.green('✓')} \`claude\` now runs the "${name}" profile  ${c.dim(r.path)}${r.action === 'unchanged' ? c.dim('  (it already did)') : ''}`)
+  await offerDefaultPath(paths)
+  return 0
+}
+
+/** Say whether the default `claude` will be found on this shell's PATH, and offer to fix that. */
+async function offerDefaultPath(paths: Paths): Promise<void> {
   const hint = defaultPathHint(paths, inspectDefaultShim(paths))
   for (const line of hint) console.log(line)
   await offerRcWrite(paths, hint)
-  return 0
 }
 
 /** `ccprovider init` — put ccprovider's PATH entries into the shell's rc file, between marker
@@ -829,7 +907,7 @@ async function cmdUsage(paths: Paths, name: string | undefined, flags: UsageFlag
   // Colour for a person at a terminal, not for a file or a pager, and not against NO_COLOR.
   const color = !!process.stdout.isTTY && !process.env.NO_COLOR
   const dim = (text: string) => (color ? c.dim(text) : text)
-  const subscription = new Set(names.filter((n) => isOauth(store.providers[n]!)))
+  const subscription = new Set(names.filter((n) => isClaude(store.providers[n]!)))
   console.log(renderUsage(rows, { subscription, color }))
   if (rows.length) {
     console.log(dim('\nFrom the transcripts Claude Code keeps in each profile, not the provider\'s bill. A dash means the provider did not report cache.'))
@@ -881,6 +959,16 @@ async function cmdUninstall(paths: Paths, name: string | undefined, yes: boolean
   return left.length ? 1 : 0
 }
 
+/** The "command" line of `ls`. The profile behind the default `claude` has no launcher of its own. */
+function commandLine(paths: Paths, n: string): string {
+  // Only the slot: any other profile can be the default and still have a launcher of its own.
+  if (n === DEFAULT_SLOT && currentDefaultProfile(paths) === n) return `  ${c.dim('command')} ${c.green('claude')}  ${c.dim('(the default)')}`
+  const s = inspectShim(paths, n)
+  return s.state === 'ours' ? `  ${c.dim('command')} ${c.green(n)}`
+    : s.state === 'foreign' ? `  ${c.dim('command')} ${c.yellow(`\`${n}\` is taken by another program`)}`
+    : `  ${c.dim(`no command — \`ccprovider install ${n}\``)}`
+}
+
 async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<ReturnType<typeof detectStore>>): Promise<number> {
   const store = loadStore(paths)
   const settings = loadSettings(paths)
@@ -894,28 +982,20 @@ async function cmdList(paths: ReturnType<typeof getPaths>, secrets: Awaited<Retu
     if (isOauth(pr)) {
       console.log(`${c.bold(n.padEnd(14))} ${c.green('Claude subscription')}`)
       console.log(`  ${c.dim('own login in its profile directory — /login on first launch')}`)
-      const s = inspectShim(paths, n)
-      console.log(
-        s.state === 'ours' ? `  ${c.dim('command')} ${c.green(n)}`
-        : s.state === 'foreign' ? `  ${c.dim('command')} ${c.yellow(`\`${n}\` is taken by another program`)}`
-        : `  ${c.dim(`no command — \`ccprovider install ${n}\``)}`,
-      )
+      console.log(commandLine(paths, n))
       continue
     }
     const hasKey = (await secrets.get(n)) != null
     const missing = missingSlots(pr)
-    const flag = !hasKey ? c.red('no key') : missing.length ? c.yellow(`unmapped: ${missing.join(',')}`) : c.green('ready')
+    const token = isClaudeToken(pr)
+    const flag = !hasKey ? c.red(token ? 'no token' : 'no key') : missing.length ? c.yellow(`unmapped: ${missing.join(',')}`) : c.green(token ? 'Claude subscription' : 'ready')
     console.log(`${c.bold(n.padEnd(14))} ${flag}`)
-    console.log(`  ${c.dim(pr.baseUrl)}`)
+    console.log(`  ${c.dim(token ? 'setup-token, sent to Anthropic as CLAUDE_CODE_OAUTH_TOKEN' : pr.baseUrl)}`)
     if (sharesSessions(pr, settings)) {
-      console.log(c.dim(`shared with ${paths.claudeDir} — sessions, todos and credentials are the plain claude's`))
+      console.log(c.dim(`shared with ${paths.claudeDir} — sessions and todos${isClaudeToken(pr) ? '' : ', and credentials,'} are the plain claude's`))
     }
-    const shim = inspectShim(paths, n)
-    console.log(
-      shim.state === 'ours' ? `  ${c.dim('command')} ${c.green(n)}`
-      : shim.state === 'foreign' ? `  ${c.dim('command')} ${c.yellow(`\`${n}\` is taken by another program`)}`
-      : `  ${c.dim(`no command — \`ccprovider install ${n}\``)}`,
-    )
+    console.log(commandLine(paths, n))
+    if (token) continue
     const a = pr.aliases
     const pair = (x?: string, y?: string) => (x === y ? (x ?? '—') : `${x ?? '—'} / ${y ?? '—'}`)
     const start = pr.defaultModel && pr.defaultModel !== a.opus ? ` · start ${pr.defaultModel}` : ''
@@ -945,13 +1025,10 @@ async function cmdUse(
   const store = loadStore(paths)
   const profile = getProfile(store, name)
   const oauth = isOauth(profile)
-  const apiKey = oauth ? '' : await secrets.get(name)
-  if (apiKey === null) {
-    console.error(`No API key stored for "${name}". Run \`ccprovider edit ${name}\` to set one.`)
-    return 1
-  }
+  const apiKey = oauth ? '' : ((await secrets.get(name)) ?? '')
   if (!oauth && !apiKey) {
-    console.error(`No API key stored for "${name}". Run \`ccprovider edit ${name}\` to set one.`)
+    const what = isClaudeToken(profile) ? 'setup-token' : 'API key'
+    console.error(`No ${what} stored for "${name}". Run \`ccprovider edit ${name}\` to set one.`)
     return 1
   }
 
@@ -1026,8 +1103,8 @@ async function cmdRemove(
 
   if (!yes) {
     const ok = await p.confirm({
-      message: isOauth(getProfile(store, name))
-        ? `Delete profile "${name}", its Claude login and its session history?`
+      message: isClaude(getProfile(store, name))
+        ? `Delete profile "${name}", its Claude ${isClaudeToken(getProfile(store, name)) ? 'token' : 'login'} and its session history?`
         : `Delete profile "${name}", its API key and its session history?`,
       initialValue: false,
     })
@@ -1057,7 +1134,7 @@ async function cmdDoctor(
   let worst: 'ok' | 'warn' | 'fail' = 'ok'
   for (const n of names) {
     const profile = getProfile(store, n)
-    console.log(`\n${c.bold(n)}  ${c.dim(isOauth(profile) ? 'Claude subscription' : profile.baseUrl)}`)
+    console.log(`\n${c.bold(n)}  ${c.dim(isClaude(profile) ? 'Claude subscription' : profile.baseUrl)}`)
     const checks = await runDoctor(n, profile, paths, secrets, { shared: sharesSessions(profile, loadSettings(paths)) })
     for (const check of checks) render(check)
     const s = worstStatus(checks)
@@ -1105,7 +1182,7 @@ async function cmdEnv(
     throw new ProfileError(`"${name}" is a Claude subscription profile: it has no provider variables to export. Its login lives in ${profileDir(paths, name)}.`)
   }
   const apiKey = isOauth(profile) ? '' : await secrets.get(name)
-  if (apiKey === null || (!apiKey && !isOauth(profile))) { console.error(`No API key stored for "${name}".`); return 1 }
+  if (apiKey === null || (!apiKey && !isOauth(profile))) { console.error(`No ${isClaudeToken(profile) ? 'setup-token' : 'API key'} stored for "${name}".`); return 1 }
   const dir = sessionConfigDir(paths, name, profile, loadSettings(paths))
   const env = buildEnv({ profile, configDir: configDirEnv(paths, dir, process.env), apiKey, model: null, baseEnv: {} })
   // Redacted when a human is looking; real values when piped into `eval` or a file.

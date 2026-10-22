@@ -21,10 +21,12 @@ export const REQUIRED_SLOTS: readonly AliasSlot[] = ['opus', 'sonnet', 'haiku', 
 
 export interface Profile {
   /** `oauth` is a Claude subscription login that lives in the profile's own config
-   *  directory: no endpoint, no API key, no alias mapping. Absent means an API-key
-   *  provider profile. */
-  kind?: 'oauth'
-  /** Anthropic-format endpoint, e.g. https://api.deepseek.com/anthropic. Empty for `oauth`. */
+   *  directory: no endpoint, no API key, no alias mapping. `claude-token` is a Claude
+   *  subscription too, but signed in with a `claude setup-token` token kept in the secret
+   *  store and handed over as CLAUDE_CODE_OAUTH_TOKEN, so nothing of the login sits in a
+   *  config directory. Absent means an API-key provider profile. */
+  kind?: 'oauth' | 'claude-token'
+  /** Anthropic-format endpoint, e.g. https://api.deepseek.com/anthropic. Empty for the Claude kinds. */
   baseUrl: string
   /** Tier -> provider model ID. Values may carry a `[1m]` suffix, which Claude Code
    *  reads per-variable and strips before the ID reaches the provider. */
@@ -54,7 +56,8 @@ export interface Profile {
   /** Run this profile's sessions in the user's real Claude config dir instead of its own:
    *  sessions, `--resume` history, todos and credentials are shared with the plain `claude`.
    *  Absent means "inherit the global setting" (see settings.ts). Never set on an oauth
-   *  profile — its login lives in its own config dir and validation refuses the field. */
+   *  profile — its login lives in its own config dir and validation refuses the field. A
+   *  claude-token profile may share: its credential is in the environment, not in the dir. */
   shareSessions?: boolean
   createdAt?: string
 }
@@ -125,12 +128,29 @@ export interface Preset {
   }
 }
 
+/** The `/login` kind: the credential lives in the profile's own config directory. */
 export function isOauth(profile: Profile): boolean {
   return profile.kind === 'oauth'
+}
+
+/** Any Claude subscription profile: talks to Anthropic, so no endpoint, aliases or tier mapping. */
+export function isClaude(profile: Profile): boolean {
+  return profile.kind === 'oauth' || profile.kind === 'claude-token'
+}
+
+/** A Claude subscription signed in with a `claude setup-token` token held in the secret store. */
+export function isClaudeToken(profile: Profile): boolean {
+  return profile.kind === 'claude-token'
 }
 
 /** Strip the `[1m]` context-window suffix from a model ID. Claude Code does this
  *  before sending, so anything that compares against a provider's catalog must too. */
 export function stripSuffix(modelId: string): string {
   return modelId.replace(/\[1m\]$/, '')
+}
+
+/** What `claude setup-token` prints starts with this. A guard against pasting the wrong thing,
+ *  not a validation: a mismatch is a warning, never a refusal. */
+export function looksLikeSetupToken(token: string): boolean {
+  return token.startsWith('sk-ant-oat')
 }

@@ -6,6 +6,29 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
+### Added
+
+- **Claude subscription (setup-token)**, a new provider in `add`. Paste the token from
+  `claude setup-token`; it is stored like an API key and passed to Claude Code as
+  `CLAUDE_CODE_OAUTH_TOKEN`. `doctor` checks the token is present and looks like one.
+- **`ccprovider add --default`** writes one profile called `default` and makes the plain
+  `claude` run it. Running it again overwrites that profile (new key, new provider, same
+  sessions) instead of adding another.
+
+### Changed
+
+- `ccprovider env` (the `sh` form) now also prints `unset` for the model and endpoint variables
+  a profile does not set, as `use` deletes them, so `eval` of a subscription profile after a
+  provider's no longer leaves the provider's base URL and token in the shell.
+- `ccprovider ls` and `doctor` show the profile behind `add --default` as the default `claude`
+  command, and not as a missing launcher.
+- `ccprovider usage` splits a Claude profile's rows into Claude models and "not Claude models —
+  from an earlier provider", for a default that was a provider before it became a subscription.
+- A setup-token profile may share chat sessions with the plain `claude`, which a `/login`
+  profile still cannot: its credential is in the environment, not in a config directory.
+
 ## [0.4.0] - 2026-10-21
 
 ### Added

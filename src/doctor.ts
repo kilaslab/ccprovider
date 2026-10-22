@@ -4,15 +4,16 @@ import { join } from 'node:path'
 import type { Paths } from './paths.js'
 import { profileDir } from './paths.js'
 import { relative, sep } from 'node:path'
-import type { Profile, AliasSlot } from './types.js'
+import { isClaudeToken, looksLikeSetupToken, type Profile, type AliasSlot } from './types.js'
 import { listInstalled, readExplore } from './agents.js'
 import { inspectLinks, LINKED_ENTRIES } from './configdir.js'
 import { missingSlots, SLOT_ENV, findClaude, MANAGED_VARS, PROVIDER_VARS, STRIPPED_VARS } from './launch.js'
 import { compareInstalled, HELPER_KEY_RE, readInstalledMcp, registeredIds, resolveServers } from './mcp.js'
+import { DEFAULT_SLOT } from './defaultslot.js'
 import { findPreset } from './presets.js'
 import { probeEndpoint, probeModel } from './probe.js'
 import type { SecretStore } from './secrets/index.js'
-import { inspectDefaultShim, inspectShim, listShims } from './shim.js'
+import { currentDefaultProfile, inspectDefaultShim, inspectShim, listShims } from './shim.js'
 import { compareVersions, inspectStatusline, STATUSLINE_SOURCE } from './statusline.js'
 
 export type Status = 'ok' | 'warn' | 'fail'
@@ -62,7 +63,7 @@ export async function runDoctor(
     checks.push({
       label: 'config directory',
       status: 'ok',
-      detail: `shared with ${paths.claudeDir} — sessions, todos and credentials are the plain claude's`,
+      detail: `shared with ${paths.claudeDir} — sessions and todos${isClaudeToken(profile) ? '' : ', and credentials,'} are the plain claude's`,
     })
   } else if (!existsSync(dir)) {
     checks.push({ label: 'profile directory', status: 'warn', detail: `${dir} not created yet (next \`use\` will create it)` })
@@ -92,6 +93,28 @@ export async function runDoctor(
       detail: signedIn
         ? 'credentials found in the profile directory'
         : `not detected in the profile directory (on macOS it may be in the Keychain) — run \`${name}\` and use /login if it asks`,
+    })
+    checks.push(commandCheck(name, paths, opts.env ?? process.env))
+    const s = settingsCheck(opts.shared ? paths.claudeDir : dir, OWNED_ENV)
+    if (s) checks.push(s)
+    if (!opts.shared) {
+      const a = agentsCheck(name, dir)
+      if (a) checks.push(a)
+    }
+    return checks
+  }
+
+  // A setup-token subscription: the token in the secret store is the whole credential, so
+  // there is no endpoint, tier or network check to make — only that the token is there and
+  // looks like one.
+  if (isClaudeToken(profile)) {
+    const token = await secrets.get(name)
+    checks.push({
+      label: `Claude token (${secrets.name})`,
+      status: !token ? 'fail' : looksLikeSetupToken(token) ? 'ok' : 'warn',
+      detail: !token
+        ? `no token stored for "${name}" — run \`ccprovider edit ${name}\` and paste the output of \`claude setup-token\``
+        : looksLikeSetupToken(token) ? 'present' : 'present, but it does not look like a setup-token token (sk-ant-oat…)',
     })
     checks.push(commandCheck(name, paths, opts.env ?? process.env))
     const s = settingsCheck(opts.shared ? paths.claudeDir : dir, OWNED_ENV)
@@ -194,6 +217,11 @@ function agentsCheck(name: string, dir: string): Check | null {
 /** Does typing `<name>` in a shell run this profile? */
 function commandCheck(name: string, paths: Paths, env: Record<string, string | undefined>): Check {
   const label = `command \`${name}\``
+  // The slot `add --default` writes has no launcher of its own: `claude` is its command, and
+  // the "default command" section checks that wrapper.
+  if (name === DEFAULT_SLOT && currentDefaultProfile(paths) === name) {
+    return { label: 'command `claude`', status: 'ok', detail: 'runs this profile — see "default command" below' }
+  }
   const s = inspectShim(paths, name, env)
 
   if (s.state === 'absent') {

@@ -55,8 +55,19 @@ export function validateProfile(raw: unknown, where: string): Profile {
   if (typeof raw !== 'object' || raw === null) throw new ProfileError(`${where}: expected an object`)
   const p = raw as Record<string, unknown>
 
-  if (p.kind != null && p.kind !== 'oauth') {
-    throw new ProfileError(`${where}: unknown kind "${String(p.kind)}" (expected "oauth" or nothing)`)
+  if (p.kind != null && p.kind !== 'oauth' && p.kind !== 'claude-token') {
+    throw new ProfileError(`${where}: unknown kind "${String(p.kind)}" (expected "oauth", "claude-token" or nothing)`)
+  }
+  if (p.kind === 'claude-token') {
+    return {
+      kind: 'claude-token',
+      baseUrl: '',
+      aliases: {},
+      preset: 'claude-token',
+      shareSessions: optionalBoolean(p.shareSessions, `${where}: shareSessions`),
+      mcp: optionalIdList(p.mcp, `${where}: mcp`),
+      createdAt: optionalString(p.createdAt, `${where}: createdAt`) ?? undefined,
+    }
   }
   if (p.kind === 'oauth') {
     // Refused, not dropped: a silently ignored `true` would sit in the file looking set

@@ -809,6 +809,31 @@ describe('renderUsage', () => {
     expect(renderUsage(rows, { subscription: new Set(['glm']), color: true })).toContain('\x1b[1m')
   })
 
+  // `add --default` keeps the slot's directory, so a slot that was DeepSeek and is now a Claude
+  // subscription holds both kinds of transcript. The label says who bills them.
+  test('a Claude subscription that was a provider before shows the two apart', () => {
+    const l = emptyLedger()
+    l.calls.a = ['deepseek-v4-pro', T0, 1000, 10, 0, 0]
+    l.calls.b = ['claude-opus-5-5', T0, 500, 20, 0, 0]
+    const out = plain(renderUsage(aggregate({ default: l }, {}), { subscription: new Set(['default']), color: false }))
+    const lines = out.split('\n')
+    const claude = lines.findIndex((x) => x.includes('Claude subscription'))
+    const earlier = lines.findIndex((x) => x.includes('from an earlier provider'))
+    expect(claude).toBeGreaterThanOrEqual(0)
+    expect(earlier).toBeGreaterThan(claude)
+    expect(lines.slice(claude, earlier).join('\n')).toContain('claude-opus-5-5')
+    expect(lines.slice(claude, earlier).join('\n')).not.toContain('deepseek-v4-pro')
+    expect(lines.slice(earlier).join('\n')).toContain('deepseek-v4-pro')
+  })
+
+  test('a subscription with only Claude models carries just the one label', () => {
+    const l = emptyLedger()
+    l.calls.a = ['claude-sonnet-5-5', T0, 500, 20, 0, 0]
+    const out = plain(renderUsage(aggregate({ me: l }, {}), { subscription: new Set(['me']), color: false }))
+    expect(out).toContain('Claude subscription')
+    expect(out).not.toContain('earlier provider')
+  })
+
   test('says so when there is nothing to show', () => {
     expect(plain(renderUsage([], { subscription: new Set(), color: false }))).toContain('No usage')
   })

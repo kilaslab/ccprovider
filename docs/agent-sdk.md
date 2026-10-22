@@ -44,11 +44,11 @@ Two are deliberate:
   covers `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`,
   `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_VERTEX_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` and
   `CLAUDE_CODE_USE_VERTEX`: the credentials and routing flags among what `ccprovider use`
-  deletes from a launch. The model variables it also clears (an inherited
-  `ANTHROPIC_DEFAULT_HAIKU_MODEL` the profile does not map, say) are not touched by the export,
-  so pass the export over a clean environment if you rely on that. The
-  `sh` form prints `unset` for each; a file or an object, which can only set variables,
-  carries an empty value.
+  deletes from a launch. The model and endpoint variables it also clears (an inherited
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL` the profile does not map, say) are removed by the `sh` form
+  only, which prints `unset` for each of them; a file or an object cannot delete anything, so
+  pass those over a clean environment if you rely on that. For the credentials and routing flags
+  the `sh` form prints `unset` too, and a file or an object carries an empty value.
 
 On a terminal the token is redacted. Piped or redirected, the output holds your real API key,
 so treat it like one.
