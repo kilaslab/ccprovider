@@ -1,6 +1,7 @@
 import { rmSync } from 'node:fs'
 import { removeProfileDir } from './configdir.js'
 import { profileDir, type Paths } from './paths.js'
+import { DEFAULT_SLOT, dropSlotFile } from './defaultslot.js'
 import { getProfile, saveStore } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
 import { removeDefaultShim, removeShim } from './shim.js'
@@ -44,6 +45,9 @@ export async function removeProfile(deps: RemoveDeps, name: string, opts: { keep
   }
   delete store.providers[name]
   saveStore(paths, store)
+  // The default's stashed providers go with it: their keys would otherwise sit in the secret
+  // store with nothing left to say what they are.
+  if (name === DEFAULT_SLOT) warnings.push(...(await dropSlotFile({ paths, secrets })))
 
   // `kimi` or `claude` in the same directory belong to someone else even if a profile
   // once shared the name.

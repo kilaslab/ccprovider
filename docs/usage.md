@@ -60,6 +60,29 @@ Figures are rounded for reading (`1.3M`). `--json` has the exact ones:
   local midnight.
 - `--by day` gives one row per model per day, in your local time zone.
 
+## A default that changed provider
+
+`ccprovider add --default` and `default --use` keep the default's directory, so its transcripts
+go on across a change of provider. The default records when it changed (`slot.json`, beside the
+profile config), and each call is counted under the provider it went to, by the time it was
+made:
+
+```
+default  GLM / Z.ai
+  model              calls  input  output  cache read  cache write  cache hit
+  glm-5.3               115  229.7K   55.3K        4.1M            0        95%
+
+default  Claude subscription
+  model              calls  input  output  cache read  cache write  cache hit
+  claude-opus-5-5        42   88.1K   12.0K        1.2M            0        93%
+```
+
+This does not go by the model's name, which is why a GLM call that was answered as
+`claude-sonnet-4-5` (below) stays under GLM. A provider it came back to is one group. With one
+provider all along it prints like any other profile. A default from before the record existed has
+no times to go by; its rows are split by the model's name as a fallback, which has that same
+hole. `--json` adds `era` to each row.
+
 ## How a call is counted
 
 Counting transcript lines would be wrong twice over.

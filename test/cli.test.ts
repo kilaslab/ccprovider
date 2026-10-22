@@ -414,6 +414,9 @@ describe('options that belong to one command', () => {
     [['ls', '--rebuild'], '--rebuild'],
     [['usage', '--off'], '--off'],
     [['ls', '--no-statusline'], '--no-statusline'],
+    [['ls', '--provider', 'glm'], '--provider'],
+    [['usage', '--key-stdin'], '--key-stdin'],
+    [['rm', 'glm', '--opus', 'x'], '--opus'],
   ])('%j is refused, naming the flag', (args, flag) => {
     const r = run(...args)
     expect(r.status).toBe(1)
@@ -784,3 +787,163 @@ describe('init', () => {
   })
 })
 
+
+describe('add without the wizard', () => {
+  /** The CLI with something on standard input, which is how a key reaches it. */
+  const runWith = (input: string, ...args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8', input })
+    return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, '') }
+  }
+  const secret = (name: string) => new FileStore(dirname(paths.configFile)).get(name)
+
+  test('a provider from its preset: saved, with the key it was piped', async () => {
+    const r = runWith('sk-from-a-pipe\n', 'add', '--provider', 'deepseek', '--key-stdin', '--no-probe', '--no-install')
+    expect(r.status).toBe(0)
+    const profile = loadStore(paths).providers.deepseek!
+    expect(profile.baseUrl).toBe('https://api.deepseek.com/anthropic')
+    expect(profile.aliases.haiku).toBe('deepseek-v4-flash')
+    expect(await secret('deepseek')).toBe('sk-from-a-pipe')
+  })
+
+  test('refuses without asking: no key, a taken name, a reserved one, a lone flag', () => {
+    const noKey = run('add', '--provider', 'deepseek', '--no-probe')
+    expect(noKey.status).toBe(1)
+    expect(noKey.out).toContain('--key-stdin is required')
+
+    expect(runWith('k', 'add', '--provider', 'glm', '--key-stdin', '--no-probe').out).toContain('already exists')
+    expect(runWith('k', 'add', '--provider', 'deepseek', '--name', 'default', '--key-stdin', '--no-probe').out).toContain('reserved')
+    const lone = run('add', '--opus', 'x')
+    expect(lone.status).toBe(1)
+    expect(lone.out).toContain('--opus only applies together with --provider')
+    expect(Object.keys(loadStore(paths).providers)).toEqual(['glm'])
+  })
+
+  test('a failed check saves nothing and says how to skip it', () => {
+    // Nothing listens on this port, so the endpoint probe cannot succeed.
+    const r = runWith('k', 'add', '--provider', 'custom', '--base-url', 'http://127.0.0.1:9', '--opus', 'm', '--haiku', 'f', '--name', 'gw', '--key-stdin')
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('--no-probe')
+    expect(loadStore(paths).providers.gw).toBeUndefined()
+  })
+
+  test('--default writes the one default profile, and replacing it takes -y', async () => {
+    const first = runWith('sk-ant-oat01-first', 'add', '--provider', 'claude-token', '--key-stdin', '--default')
+    expect(first.status).toBe(0)
+    expect(loadStore(paths).providers.default!.kind).toBe('claude-token')
+    expect(await secret('default')).toBe('sk-ant-oat01-first')
+    expect(existsSync(join(paths.defaultBinDir, 'claude'))).toBe(true)
+
+    const refused = runWith('k', 'add', '--provider', 'deepseek', '--key-stdin', '--default', '--no-probe')
+    expect(refused.status).toBe(1)
+    expect(refused.out).toContain('-y')
+    expect(loadStore(paths).providers.default!.kind).toBe('claude-token')
+    expect(await secret('default')).toBe('sk-ant-oat01-first')
+
+    const replaced = runWith('sk-deepseek', 'add', '--provider', 'deepseek', '--key-stdin', '--default', '--no-probe', '-y')
+    expect(replaced.status).toBe(0)
+    expect(loadStore(paths).providers.default!.baseUrl).toBe('https://api.deepseek.com/anthropic')
+    expect(await secret('default')).toBe('sk-deepseek')
+    expect(Object.keys(loadStore(paths).providers).sort()).toEqual(['default', 'glm'])
+  })
+
+  test('--default takes no --name and no --no-install', () => {
+    expect(runWith('k', 'add', '--provider', 'deepseek', '--name', 'x', '--key-stdin', '--default', '--no-probe').out).toContain('--name does not apply')
+    expect(run('add', '--default', '--no-install').out).toContain('--no-install does not apply')
+  })
+})
+
+describe('the reserved name default', () => {
+  test('rename refuses it as a target, and an existing profile of that name still works', () => {
+    expect(run('rename', 'glm', 'default').out).toContain('reserved')
+    const store = loadStore(paths)
+    store.providers.default = store.providers.glm!
+    saveStore(paths, store)
+    expect(run('ls').out).toContain('default')
+    expect(run('rename', 'default', 'old', '-y').status).toBe(0)
+    expect(loadStore(paths).providers.old).toBeDefined()
+  })
+})
+
+describe('swapping the default between providers', () => {
+  const runWith = (input: string, ...args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8', input })
+    return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, '') }
+  }
+  const secret = (account: string) => new FileStore(dirname(paths.configFile)).get(account)
+
+  /** DeepSeek as the default, then a Claude subscription over it: DeepSeek ends up stashed. */
+  const twoProviders = () => {
+    expect(runWith('sk-deepseek', 'add', '--provider', 'deepseek', '--key-stdin', '--default', '--no-probe', '-y').status).toBe(0)
+    expect(runWith('sk-ant-oat01-token', 'add', '--provider', 'claude-token', '--key-stdin', '--default', '-y').status).toBe(0)
+  }
+
+  test('add --default keeps what it replaces, and ls and default say so', async () => {
+    twoProviders()
+    expect(loadStore(paths).providers.default!.kind).toBe('claude-token')
+    expect(await secret('default:deepseek')).toBe('sk-deepseek')
+    expect(existsSync(join(dirname(paths.configFile), 'slot.json'))).toBe(true)
+    expect(run('ls').out).toContain('stashed: deepseek')
+    expect(run('default').out).toContain('stashed: deepseek')
+    // A stash is not a profile.
+    expect(Object.keys(loadStore(paths).providers).sort()).toEqual(['default', 'glm'])
+  })
+
+  test('default --use swaps to it and back, with no wizard and no key typed', async () => {
+    twoProviders()
+    const toDeepseek = run('default', '--use', 'deepseek')
+    expect(toDeepseek.status).toBe(0)
+    expect(toDeepseek.out).toContain('now runs deepseek')
+    expect(toDeepseek.out).toContain('claude --continue')
+    expect(loadStore(paths).providers.default!.baseUrl).toBe('https://api.deepseek.com/anthropic')
+    expect(await secret('default')).toBe('sk-deepseek')
+    expect(await secret('default:claude-token')).toBe('sk-ant-oat01-token')
+
+    expect(run('default', '--use', 'claude-token').status).toBe(0)
+    expect(loadStore(paths).providers.default!.kind).toBe('claude-token')
+    expect(await secret('default')).toBe('sk-ant-oat01-token')
+    expect(await secret('default:deepseek')).toBe('sk-deepseek')
+  })
+
+  test('default --use says so when it is already that, and what exists when it is not', () => {
+    twoProviders()
+    expect(run('default', '--use', 'claude-token').out).toContain('already is claude-token')
+    const unknown = run('default', '--use', 'glm')
+    expect(unknown.status).toBe(1)
+    expect(unknown.out).toContain('It has: deepseek')
+  })
+
+  test('default --forget drops one, and the options keep to themselves', async () => {
+    twoProviders()
+    expect(run('default', '--forget', 'deepseek').status).toBe(0)
+    expect(await secret('default:deepseek')).toBeNull()
+    expect(run('ls').out).not.toContain('stashed')
+
+    const both = run('default', 'glm', '--use', 'deepseek')
+    expect(both.status).toBe(1)
+    expect(both.out).toContain('one at a time')
+    expect(run('ls', '--use', 'deepseek').out).toContain('only applies to `ccprovider default`')
+    expect(run('usage', '--forget', 'x').out).toContain('--forget')
+  })
+
+  test('the default cannot be renamed once it has stashed providers, and rm takes them with it', async () => {
+    twoProviders()
+    const renamed = run('rename', 'default', 'old', '-y')
+    expect(renamed.status).toBe(1)
+    expect(renamed.out).toContain('cannot be renamed')
+
+    expect(run('rm', 'default', '-y').status).toBe(0)
+    expect(await secret('default:deepseek')).toBeNull()
+    expect(await secret('default')).toBeNull()
+    expect(existsSync(join(dirname(paths.configFile), 'slot.json'))).toBe(false)
+    expect(loadStore(paths).providers.default).toBeUndefined()
+  })
+
+  test('doctor reports a stashed key that has gone missing', async () => {
+    twoProviders()
+    new FileStore(dirname(paths.configFile)).delete('default:deepseek')
+    const r = run('doctor', 'default')
+    expect(r.out).toContain('default slot')
+    expect(r.out).toContain('stashed deepseek')
+    expect(r.out).toContain('--forget deepseek')
+  })
+})

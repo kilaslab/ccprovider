@@ -163,17 +163,21 @@ describe('the default slot', () => {
     expect(readFileSync(r.shim.path, 'utf8')).toContain('default')
   })
 
-  test('switching to a /login profile drops the old key, and away from one drops its credentials', async () => {
+  test('switching to a /login profile moves the old key aside, and away from one sets its login aside', async () => {
     const secrets = new MemoryStore()
     await saveDefaultSlot({ paths, secrets }, glm, 'glm-key', launcher)
     await saveDefaultSlot({ paths, secrets }, { kind: 'oauth', baseUrl: '', aliases: {}, preset: 'claude' }, null, launcher)
+    // A /login stores no key, so none is left under the slot; the old one is kept as a stash.
     expect(await secrets.get(DEFAULT_SLOT)).toBeNull()
+    expect(await secrets.get('default:custom')).toBe('glm-key') // a profile with no preset is filed as custom
 
     const credentials = join(profileDir(paths, DEFAULT_SLOT), '.credentials.json')
     mkdirSync(profileDir(paths, DEFAULT_SLOT), { recursive: true })
     writeFileSync(credentials, '{}')
     await saveDefaultSlot({ paths, secrets }, token, SECRET, launcher)
+    // Not deleted: swapping back to it needs no new login.
     expect(existsSync(credentials)).toBe(false)
+    expect(existsSync(join(profileDir(paths, DEFAULT_SLOT), '.credentials.stashed.json'))).toBe(true)
   })
 })
 

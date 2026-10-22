@@ -2,13 +2,14 @@ import { p, orCancel } from './prompts.js'
 import { PRESETS, findPreset, MIRRORS, compactWindowFor } from '../presets.js'
 import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
-import { validateName } from '../profile.js'
+import { assertNotReserved } from '../profile.js'
 import { regionFor } from '../mcp.js'
 import { AGENT_CATALOG, AGENT_SOURCE, listInstalled, readExplore } from '../agents.js'
 import { startChoiceOf } from '../launch.js'
 import { loadSettings, shareOverride, sharesSessions } from '../settings.js'
 import { profileDir } from '../paths.js'
 import { DEFAULT_SLOT } from '../defaultslot.js'
+import { buildOauthProfile, buildProfile, buildTokenProfile } from '../newprofile.js'
 import { OPUSPLAN, isOauth, looksLikeSetupToken, type AliasSlot, type Profile, type Preset } from '../types.js'
 import type { Paths } from '../paths.js'
 
@@ -89,7 +90,7 @@ export async function runWizard(
     if (slot || replace) await confirmSave(name, replace, slot, takenNames)
     return {
       name,
-      profile: { kind: 'oauth', baseUrl: '', aliases: {}, preset: CLAUDE_CHOICE, createdAt: new Date().toISOString() },
+      profile: buildOauthProfile(new Date().toISOString()),
       apiKey: null,
       agents,
       explore,
@@ -228,7 +229,7 @@ export async function runWizard(
     paths, name, kept, seed, aliases, mcpFrom, () => chooseMcp(preset, baseUrl, mcpFrom),
   )
 
-  const profile: Profile = {
+  const profile = buildProfile({
     baseUrl,
     aliases,
     defaultModel,
@@ -239,9 +240,9 @@ export async function runWizard(
     blankApiKey: existing?.profile.blankApiKey ?? preset?.blankApiKey ?? false,
     preset: presetId as string,
     mcp,
-    ...(shareSessions !== undefined ? { shareSessions } : {}),
+    shareSessions,
     createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
-  }
+  })
 
   p.note(
     [
@@ -374,14 +375,7 @@ async function runTokenWizard(
 
   const { shares, shareSessions, agents, explore } = await askOwnConfig(paths, name, kept, seed, {}, undefined)
 
-  const profile: Profile = {
-    kind: 'claude-token',
-    baseUrl: '',
-    aliases: {},
-    preset: CLAUDE_TOKEN_CHOICE,
-    ...(shareSessions !== undefined ? { shareSessions } : {}),
-    createdAt: existing?.profile.createdAt ?? new Date().toISOString(),
-  }
+  const profile = buildTokenProfile(shareSessions, existing?.profile.createdAt ?? new Date().toISOString())
 
   p.note(
     [
@@ -465,11 +459,11 @@ async function chooseName(
           validate: (v) => {
             const n = v || fallback
             if (!n) return `A name is required, e.g. "${placeholder}".`
-            try { validateName(n) } catch (e) { return (e as Error).message }
+            try { assertNotReserved(n) } catch (e) { return (e as Error).message }
           },
         }),
       ) || fallback!
-    const name = validateName(raw)
+    const name = assertNotReserved(raw)
     // Case-insensitive: "DeepSeek" and "deepseek" would share one directory.
     if (!takenNames.some((t) => t.toLowerCase() === name)) return { name, replace: false }
 

@@ -231,7 +231,7 @@ had before stay in its own directory; `ccprovider usage glm` still reports them.
 
 | Command | What it does |
 |---|---|
-| `ccprovider add` | set up a profile (and install it as a command) |
+| `ccprovider add` | set up a profile (and install it as a command). `--default` writes the one profile behind the plain `claude`; `--provider <id> --key-stdin …` skips the wizard |
 | `ccprovider ls` | list profiles and their state |
 | `ccprovider use <name> [-m tier]` | launch Claude Code |
 | `ccprovider edit <name>` | change models, key, endpoint, or MCP servers |
@@ -239,7 +239,7 @@ had before stay in its own directory; `ccprovider usage glm` still reports them.
 | `ccprovider rm <name>` | delete a profile, its key, its history, and its command (also `delete`) |
 | `ccprovider install [name]` | make a profile a command (all profiles if no name) |
 | `ccprovider uninstall [name]` | remove a command (the profile stays) |
-| `ccprovider default [<name>\|--off]` | make a profile the plain `claude` command, or put the real one back |
+| `ccprovider default [<name>\|--off\|--use <provider>\|--forget <provider>]` | make a profile the plain `claude` command, put the real one back, or swap the default to a provider it kept |
 | `ccprovider doctor [name]` | check everything, end to end |
 | `ccprovider statusline [add\|rm]` | show context use in Claude Code's footer; one install covers every profile |
 | `ccprovider usage [name]` | tokens used per model: input, output and cache (`--since`, `--by day`, `--json`) |
@@ -252,6 +252,13 @@ had before stay in its own directory; `ccprovider usage glm` still reports them.
 
 `add` and `edit` take `--refresh` to bypass the 24-hour model-list cache. `add` takes
 `--no-install` to skip installing the command. `-y` skips confirmation prompts.
+
+`add --provider <id>` runs without the wizard, for scripts: the key is read from standard input
+(`--key-stdin`, never an argument) and the other flags answer its questions (`--name`,
+`--base-url`, `--opus --sonnet --haiku --subagent`, `--start`, `--context`, `--compact`,
+`--share-sessions`, `--agents`, `--explore`, `--mcp`; `ccprovider --help` lists them). A preset
+fills in what you leave out. The endpoint and every model are checked first, and a failure
+exits non-zero (`--no-probe` skips that). Nothing is asked: replacing the default needs `-y`.
 
 `-m` takes a tier (`opus`, `sonnet`, `haiku`), `opusplan`, or a raw provider model ID.
 Anything after `--` goes straight to `claude`:
@@ -336,11 +343,16 @@ it later). A `/login` profile cannot: its login lives in its own directory.
 
 ```bash
 ccprovider add --default     # pick any provider; it is written as the profile "default"
+ccprovider default --use claude-token   # later: swap to one it kept, no wizard
 ```
 
 `add --default` skips the name question and writes a single profile called `default`, then makes
 the plain `claude` run it. Run it again with another provider and the profile is overwritten
-rather than a new one added: its key and settings are swapped, and its session history is kept.
+rather than a new one added, and its session history is kept. What it replaced is **kept too**:
+its profile and key, filed under their provider, so `ccprovider default --use <provider>` brings
+them back with nothing typed. That is what you want when a Claude subscription runs out mid-work:
+`ccprovider default --use deepseek`, then `claude --continue`. The name `default` is reserved for
+this profile. Details and the limits: [docs/default-command.md](docs/default-command.md#one-profile-called-default-replaced-in-place).
 
 ### OpenAI-compatible endpoints
 
@@ -502,7 +514,9 @@ It reads the transcripts Claude Code keeps in each profile, subagents included, 
 runs in the request path. These are counts from this machine, not the provider's bill.
 `--json` prints exact figures for scripts, and `--rebuild` forgets the ledger and reads the
 transcripts again. How a call is counted, and why the totals survive Claude Code deleting
-old transcripts: [docs/usage.md](docs/usage.md).
+old transcripts: [docs/usage.md](docs/usage.md). The `default` profile may have been several
+providers; its rows are grouped by the provider each call went to, from the time it was made.
+A default that never changed provider looks like any other profile.
 
 ### Agents
 
@@ -688,13 +702,14 @@ README.
 | What it is | A Node CLI that launches Claude Code with the environment for a chosen Anthropic-compatible provider |
 | Binary | `ccprovider`. Check it with `ccprovider --version` |
 | Needs | Node 20.11+, macOS or Linux (WSL works), `claude` on `PATH`. Native Windows is not supported |
-| Interactive commands | `add`, `edit`, and `agents add` without IDs open prompts. `-y` skips confirmation prompts |
+| Interactive commands | `add`, `edit`, and `agents add` without IDs open prompts. `-y` skips confirmation prompts. `add --provider <id> --key-stdin …` never prompts: the key is read from stdin and a failed check exits non-zero |
+| The default `claude` | `add --default` writes the one profile `default`; `default --use <provider>` swaps to one it kept. `default` is a reserved profile name |
 | Launch | `ccprovider use <name> [-m tier] [-- <claude args>]`, or the installed command `<name> [<claude args>]` |
 | Headless run | `<name> -p "<prompt>"` passes `-p` to `claude` |
 | Environment | `ccprovider env <name> --format sh\|dotenv\|json` |
 | Health check | `ccprovider doctor [name]` |
 | Token usage | `ccprovider usage [name] --json` |
-| Profile names | Lowercased. `claude`, `ccprovider`, `python3`, `python`, `security`, `secret-tool`, `node` and `npx` can't be command names |
+| Profile names | Lowercased. `default` is reserved for `add --default`. `claude`, `ccprovider`, `python3`, `python`, `security`, `secret-tool`, `node` and `npx` can't be command names |
 | State | See [Where things live](#where-things-live). Keys are in the OS keyring, never in config |
 | Out of scope | OpenAI-format endpoints (front them with LiteLLM), request translation, proxying |
 

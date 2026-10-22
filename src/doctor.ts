@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Paths } from './paths.js'
 import { profileDir } from './paths.js'
 import { relative, sep } from 'node:path'
-import { isClaudeToken, looksLikeSetupToken, type Profile, type AliasSlot } from './types.js'
+import { isClaudeToken, isOauth, looksLikeSetupToken, type Profile, type AliasSlot } from './types.js'
 import { listInstalled, readExplore } from './agents.js'
 import { inspectLinks, LINKED_ENTRIES } from './configdir.js'
 import { missingSlots, SLOT_ENV, findClaude, MANAGED_VARS, PROVIDER_VARS, STRIPPED_VARS } from './launch.js'
@@ -14,6 +14,7 @@ import { findPreset } from './presets.js'
 import { probeEndpoint, probeModel } from './probe.js'
 import type { SecretStore } from './secrets/index.js'
 import { currentDefaultProfile, inspectDefaultShim, inspectShim, listShims } from './shim.js'
+import { loadSlot, slotFilePath, variantAccount } from './slot.js'
 import { compareVersions, inspectStatusline, STATUSLINE_SOURCE } from './statusline.js'
 
 export type Status = 'ok' | 'warn' | 'fail'
@@ -445,6 +446,40 @@ export function statuslineChecks(paths: Paths, shipped: string = STATUSLINE_SOUR
   // Newer is fine: the Claude plugin's own hook can install one, and `add` leaves it be.
   const newer = compareVersions(s.version, shipped) > 0 ? `, newer than the v${shipped} ccprovider ships` : ''
   return [{ label, status: 'ok', detail: `v${s.version}${newer}, shown in every profile` }]
+}
+
+/** The default slot's side of the house: each provider it stashed still has what swapping back
+ *  needs, and the file does not outlive the profile it describes. A whole-install check. */
+export async function slotChecks(paths: Paths, secrets: SecretStore, knownProfiles: string[]): Promise<Check[]> {
+  if (!existsSync(slotFilePath(paths))) return []
+  let slot
+  try {
+    slot = loadSlot(paths)
+  } catch (e) {
+    return [{ label: 'slot file', status: 'fail', detail: (e as Error).message }]
+  }
+  const checks: Check[] = []
+  const keys = Object.keys(slot.variants).sort()
+  if (!knownProfiles.includes(DEFAULT_SLOT) && (keys.length || slot.epochs.length)) {
+    checks.push({
+      label: 'slot file',
+      status: 'warn',
+      detail: `${slotFilePath(paths)} describes the default, but there is no "default" profile — \`ccprovider add --default\` sets it up again`,
+    })
+  }
+  for (const key of keys) {
+    if (isOauth(slot.variants[key]!)) {
+      checks.push({ label: `stashed ${key}`, status: 'ok', detail: 'a /login: signing back in is only needed if its login was removed' })
+      continue
+    }
+    const secret = await secrets.get(variantAccount(key))
+    checks.push({
+      label: `stashed ${key} (${secrets.name})`,
+      status: secret ? 'ok' : 'fail',
+      detail: secret ? 'key present' : `its key is gone from the secret store — \`ccprovider default --forget ${key}\` drops the entry`,
+    })
+  }
+  return checks
 }
 
 /** Launchers whose profile has been deleted — reported once, not per profile. */
