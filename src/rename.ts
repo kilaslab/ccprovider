@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync, readFileSync, renameSync, type Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { profileDir, type Paths } from './paths.js'
-import { getProfile, ProfileError, saveStore, validateName } from './profile.js'
+import { assertNotReserved, getProfile, ProfileError, saveStore, validateName } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
 import { shellQuote } from './shell.js'
 import { commandName, inspectShim, installDefaultShim, installShim, readDefaultShimInfo, removeShim } from './shim.js'
@@ -45,7 +45,7 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
 
   // ---- preflight: nothing below this block may change anything
   const from = validateName(fromRaw)
-  const to = validateName(toRaw)
+  const to = assertNotReserved(toRaw)
   const profile = getProfile(store, from)
   if (from === to) throw new ProfileError(`"${from}" is already called that.`)
   if (Object.hasOwn(store.providers, to)) throw new ProfileError(`A profile named "${to}" already exists.`)

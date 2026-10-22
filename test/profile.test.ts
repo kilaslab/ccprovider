@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadStore, saveStore, validateStore, validateProfile, validateName, getProfile, ProfileError } from '../src/profile.js'
+import { assertNotReserved, loadStore, saveStore, validateStore, validateProfile, validateName, getProfile, ProfileError } from '../src/profile.js'
 import { MemoryStore } from '../src/secrets/index.js'
 import { FileStore } from '../src/secrets/file.js'
 import type { Paths } from '../src/paths.js'
@@ -44,6 +44,22 @@ test('opusplan as the default model survives a save and load', () => {
   })
   saveStore(paths, store)
   expect(loadStore(paths).providers.glm!.defaultModel).toBe('opusplan')
+})
+
+describe('the reserved name `default`', () => {
+  // A store written before the name was reserved may hold an ordinary profile called `default`;
+  // it has to keep loading and running, or an upgrade would lock the user out of it.
+  test('an existing profile called default still loads and can be looked up', () => {
+    const store = validateStore({ version: 1, providers: { default: { baseUrl: 'https://api.deepseek.com/anthropic', aliases: { opus: 'm' } } } })
+    expect(getProfile(store, 'default').baseUrl).toBe('https://api.deepseek.com/anthropic')
+    expect(validateName('default')).toBe('default')
+  })
+
+  test('a new profile cannot take it, in any case', () => {
+    expect(() => assertNotReserved('default')).toThrow(/reserved/)
+    expect(() => assertNotReserved('DEFAULT')).toThrow(/reserved/)
+    expect(assertNotReserved('Work')).toBe('work')
+  })
 })
 
 describe('mcp field', () => {

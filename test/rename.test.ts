@@ -231,6 +231,7 @@ describe('preflight refusals change nothing', () => {
     ['a name another profile has', 'zclaude', 'other', /already exists/],
     ['an invalid name', 'zclaude', '../evil', /not a valid profile name/],
     ['a name that cannot be a command', 'zclaude', 'claude', /cannot be installed as a command/],
+    ['the name reserved for the default claude', 'zclaude', 'default', /reserved/],
   ])('%s', async (_label, from, to, message) => {
     await expect(renameProfile(deps(), from, to)).rejects.toThrow(message as RegExp)
     await expectUntouched()

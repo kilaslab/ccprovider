@@ -2,7 +2,7 @@ import { p, orCancel } from './prompts.js'
 import { PRESETS, findPreset, MIRRORS, compactWindowFor } from '../presets.js'
 import { probeEndpoint, probeModel, OPENAI_GUIDANCE } from '../probe.js'
 import { fetchOpenRouterCatalog, fetchGenericCatalog, toolCapable, formatPrice, type ModelInfo } from '../catalog.js'
-import { validateName } from '../profile.js'
+import { assertNotReserved } from '../profile.js'
 import { regionFor } from '../mcp.js'
 import { AGENT_CATALOG, AGENT_SOURCE, listInstalled, readExplore } from '../agents.js'
 import { startChoiceOf } from '../launch.js'
@@ -465,11 +465,11 @@ async function chooseName(
           validate: (v) => {
             const n = v || fallback
             if (!n) return `A name is required, e.g. "${placeholder}".`
-            try { validateName(n) } catch (e) { return (e as Error).message }
+            try { assertNotReserved(n) } catch (e) { return (e as Error).message }
           },
         }),
       ) || fallback!
-    const name = validateName(raw)
+    const name = assertNotReserved(raw)
     // Case-insensitive: "DeepSeek" and "deepseek" would share one directory.
     if (!takenNames.some((t) => t.toLowerCase() === name)) return { name, replace: false }
 

@@ -175,6 +175,26 @@ export function validateName(name: string): string {
   return name.toLowerCase()
 }
 
+/** Names that `add` and `rename` will not hand out. `default` is the profile behind the plain
+ *  `claude` (`add --default`), and an ordinary profile with that name would be overwritten by it.
+ *
+ *  Kept out of `validateName` on purpose: that runs on every load and lookup, and a store written
+ *  before this rule may already hold an ordinary profile called `default`, which must keep
+ *  loading, running and being removable. */
+export const RESERVED_PROFILE_NAMES: readonly string[] = ['default']
+
+/** `validateName` for a name about to be *created*: also refuses a reserved one. */
+export function assertNotReserved(name: string): string {
+  const key = validateName(name)
+  if (RESERVED_PROFILE_NAMES.includes(key)) {
+    throw new ProfileError(
+      `"${key}" is reserved for the profile behind the plain \`claude\`. ` +
+        `Set that one up with \`ccprovider add --default\`, or pick another name.`,
+    )
+  }
+  return key
+}
+
 export function getProfile(store: ProfileStore, name: string): Profile {
   const key = validateName(name)
   // Own keys only: `constructor` is a valid profile name and an inherited property of every object.
