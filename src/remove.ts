@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs'
+import type { ClaudeLogins } from './claudelogin.js'
 import { removeProfileDir } from './configdir.js'
 import { profileDir, type Paths } from './paths.js'
 import { DEFAULT_SLOT, dropSlotFile } from './defaultslot.js'
@@ -11,6 +12,7 @@ import type { ProfileStore } from './types.js'
 export interface RemoveDeps {
   paths: Paths
   secrets: SecretStore
+  logins: ClaudeLogins
   store: ProfileStore
 }
 
@@ -24,24 +26,33 @@ export interface RemoveResult {
 }
 
 /**
- * Delete a profile: its directory (session history and its own agents), its key, its
- * entry in the config, and its command. Used by `rm`, and by `add` when the user chooses
- * to replace a profile of the same name.
+ * Delete a profile: its directory (session history and its own agents), its key, its Claude
+ * login, its entry in the config, and its command. Used by `rm`, and by `add` when the user
+ * chooses to replace a profile of the same name.
  *
  * The directory goes first and the config write is what makes it final, so a failure
  * after that — a denied Keychain prompt — is reported rather than leaving a profile in
  * the config with no directory.
  */
 export async function removeProfile(deps: RemoveDeps, name: string, opts: { keepDefault?: boolean } = {}): Promise<RemoveResult> {
-  const { paths, secrets, store } = deps
+  const { paths, secrets, logins, store } = deps
   getProfile(store, name)
   const warnings: string[] = []
 
-  removeProfileDir(profileDir(paths, name), paths.dirsRoot)
+  const dir = profileDir(paths, name)
+  removeProfileDir(dir, paths.dirsRoot)
   try {
     await secrets.delete(name)
   } catch (e) {
     warnings.push(`The key for "${name}" is still in the secret store (${(e as Error).message}); it is unused and safe to delete.`)
+  }
+  // Any profile's, not only a subscription's: whatever signed in with /login in this directory.
+  // On macOS it is in the Keychain under the directory's path, out of reach of removing the
+  // directory, and a profile added later under this name would come up signed in as it.
+  try {
+    await logins.delete(dir)
+  } catch (e) {
+    warnings.push(`The Claude login for "${name}" is still in the ${logins.name} (${(e as Error).message}); it is unused and safe to delete.`)
   }
   delete store.providers[name]
   saveStore(paths, store)

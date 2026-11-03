@@ -8,12 +8,14 @@ import { copyFileSync } from 'node:fs'
 import { loadStore, saveStore } from '../src/profile.js'
 import { inspectDefaultShim, installDefaultShim, installShim, inspectShim } from '../src/shim.js'
 import { MemoryStore, type SecretStore } from '../src/secrets/index.js'
+import { MemoryLogins } from '../src/claudelogin.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import type { Profile, ProfileStore } from '../src/types.js'
 
 let home: string
 let paths: Paths
 let secrets: MemoryStore
+let logins: MemoryLogins
 let store: ProfileStore
 const launcher = ['/opt/cc/ccprovider']
 
@@ -35,6 +37,7 @@ beforeEach(async () => {
     usageDir: join(home, 'usage'),
   }
   secrets = new MemoryStore()
+  logins = new MemoryLogins()
   await secrets.set('zclaude', 'sk-secret')
   await secrets.set('other', 'sk-other')
 
@@ -50,7 +53,7 @@ beforeEach(async () => {
 })
 afterEach(() => rmSync(home, { recursive: true, force: true }))
 
-const deps = (over: Partial<Parameters<typeof renameProfile>[0]> = {}) => ({ paths, secrets, store, launcher, ...over })
+const deps = (over: Partial<Parameters<typeof renameProfile>[0]> = {}) => ({ paths, secrets, logins, store, launcher, ...over })
 
 /** Everything a failed rename must leave exactly as it found it. */
 async function expectUntouched() {
@@ -61,6 +64,52 @@ async function expectUntouched() {
 }
 
 describe('renameProfile', () => {
+  // Regression: on macOS Claude Code files a /login under the directory's path, so moving the
+  // directory signed a subscription profile out and left its login under the old path.
+  test("moves the directory's Claude login to the new path", async () => {
+    await logins.set(profileDir(paths, 'zclaude'), Buffer.from('{"claudeAiOauth":{}}'))
+    const r = await renameProfile(deps(), 'zclaude', 'glm')
+    expect(r.warnings).toEqual([])
+    expect((await logins.get(profileDir(paths, 'glm')))?.toString()).toBe('{"claudeAiOauth":{}}')
+    expect(await logins.get(profileDir(paths, 'zclaude'))).toBeNull()
+  })
+
+  test('a profile with no login writes none', async () => {
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect(logins.map.size).toBe(0)
+  })
+
+  test('a stale login under the new path, from a deleted profile, is replaced', async () => {
+    await logins.set(profileDir(paths, 'zclaude'), Buffer.from('mine'))
+    await logins.set(profileDir(paths, 'glm'), Buffer.from('a deleted profile'))
+    await renameProfile(deps(), 'zclaude', 'glm')
+    expect((await logins.get(profileDir(paths, 'glm')))?.toString()).toBe('mine')
+  })
+
+  test('a failed rename leaves the login where it was', async () => {
+    await logins.set(profileDir(paths, 'zclaude'), Buffer.from('mine'))
+    await expect(renameProfile(deps({ save: () => { throw new Error('disk full') } }), 'zclaude', 'glm')).rejects.toThrow(/disk full/)
+    expect((await logins.get(profileDir(paths, 'zclaude')))?.toString()).toBe('mine')
+    expect(await logins.get(profileDir(paths, 'glm'))).toBeNull()
+    await expectUntouched()
+  })
+
+  test('a login that cannot be read stops the rename before anything moves', async () => {
+    const denied = Object.assign(new MemoryLogins(), { get: async () => { throw new Error('denied') } })
+    await expect(renameProfile(deps({ logins: denied }), 'zclaude', 'glm')).rejects.toThrow(/denied/)
+    await expectUntouched()
+  })
+
+  test('an old login that cannot be deleted after the rename is a warning', async () => {
+    const stuck = Object.assign(new MemoryLogins(), { delete: async () => { throw new Error('denied') } })
+    await stuck.set(profileDir(paths, 'zclaude'), Buffer.from('mine'))
+    const r = await renameProfile(deps({ logins: stuck }), 'zclaude', 'glm')
+    expect(Object.keys(loadStore(paths).providers)).toEqual(['glm', 'other'])
+    expect((await stuck.get(profileDir(paths, 'glm')))?.toString()).toBe('mine')
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toContain('Claude login under the old directory')
+  })
+
   test('moves the store entry, directory, key and command together', async () => {
     const r = await renameProfile(deps(), 'zclaude', 'glm')
 

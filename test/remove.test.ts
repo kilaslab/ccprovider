@@ -7,6 +7,7 @@ import { emptyLedger, ledgerPath, saveLedger } from '../src/usage.js'
 import { loadStore, saveStore } from '../src/profile.js'
 import { inspectDefaultShim, installDefaultShim, installShim } from '../src/shim.js'
 import { MemoryStore } from '../src/secrets/index.js'
+import { MemoryLogins } from '../src/claudelogin.js'
 import { reconcileLinks } from '../src/configdir.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import type { ProfileStore } from '../src/types.js'
@@ -14,6 +15,7 @@ import type { ProfileStore } from '../src/types.js'
 let home: string
 let paths: Paths
 let secrets: MemoryStore
+let logins: MemoryLogins
 let store: ProfileStore
 
 beforeEach(async () => {
@@ -31,6 +33,7 @@ beforeEach(async () => {
   mkdirSync(join(paths.claudeDir, 'skills'), { recursive: true })
   writeFileSync(join(paths.claudeDir, 'skills', 'keep.md'), 'shared skill')
   secrets = new MemoryStore()
+  logins = new MemoryLogins()
   await secrets.set('glm', 'sk-glm')
   store = {
     version: 1,
@@ -48,7 +51,7 @@ afterEach(() => rmSync(home, { recursive: true, force: true }))
 
 describe('removeProfile', () => {
   test('takes the profile, its directory, its key and its command — nothing else', async () => {
-    const r = await removeProfile({ paths, secrets, store }, 'glm')
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(r).toEqual({ command: 'removed', warnings: [] })
     expect(Object.keys(loadStore(paths).providers)).toEqual(['other'])
     expect(existsSync(profileDir(paths, 'glm'))).toBe(false)
@@ -60,14 +63,35 @@ describe('removeProfile', () => {
   test('a command of the same name that ccprovider did not write is left alone', async () => {
     rmSync(join(paths.binDir, 'glm'))
     writeFileSync(join(paths.binDir, 'glm'), '#!/bin/sh\necho not ours\n', { mode: 0o755 })
-    expect((await removeProfile({ paths, secrets, store }, 'glm')).command).toBe('foreign')
+    expect((await removeProfile({ paths, secrets, logins, store }, 'glm')).command).toBe('foreign')
     expect(readFileSync(join(paths.binDir, 'glm'), 'utf8')).toContain('not ours')
   })
 
   test('a key that cannot be deleted does not keep the profile around', async () => {
     const stuck = Object.assign(new MemoryStore(), { delete: async () => { throw new Error('denied') } })
-    const r = await removeProfile({ paths, secrets: stuck, store }, 'glm')
+    const r = await removeProfile({ paths, secrets: stuck, logins, store }, 'glm')
     expect(loadStore(paths).providers.glm).toBeUndefined()
+    expect(r.warnings[0]).toContain('denied')
+  })
+
+  // Regression: on macOS Claude Code keeps a /login in the Keychain under the directory's path,
+  // which removing the directory does not reach. `rm` left a working login behind, and a profile
+  // added later under the same name came up signed in as that account.
+  test("takes the directory's Claude login, and no other profile's", async () => {
+    await logins.set(profileDir(paths, 'glm'), Buffer.from('{"claudeAiOauth":{}}'))
+    await logins.set(profileDir(paths, 'other'), Buffer.from('still signed in'))
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
+    expect(r.warnings).toEqual([])
+    expect(await logins.get(profileDir(paths, 'glm'))).toBeNull()
+    expect((await logins.get(profileDir(paths, 'other')))?.toString()).toBe('still signed in')
+  })
+
+  test('a login that cannot be deleted does not keep the profile around', async () => {
+    const stuck = Object.assign(new MemoryLogins(), { delete: async () => { throw new Error('denied') } })
+    const r = await removeProfile({ paths, secrets, logins: stuck, store }, 'glm')
+    expect(loadStore(paths).providers.glm).toBeUndefined()
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toContain('Claude login for "glm"')
     expect(r.warnings[0]).toContain('denied')
   })
 })
@@ -77,7 +101,7 @@ describe('the default `claude` wrapper', () => {
 
   test('goes with the profile it runs, so `claude` is not left pointing at nothing', async () => {
     installDefaultShim(paths, 'glm', launcher)
-    const r = await removeProfile({ paths, secrets, store }, 'glm')
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(r.defaultCommand).toBe('removed')
     expect(inspectDefaultShim(paths, { PATH: '' }).state).toBe('absent')
   })
@@ -87,14 +111,14 @@ describe('the default `claude` wrapper', () => {
   // `claude` back to stock Claude Code.
   test('stays when the profile is being replaced by one of the same name', async () => {
     installDefaultShim(paths, 'glm', launcher)
-    const r = await removeProfile({ paths, secrets, store }, 'glm', { keepDefault: true })
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm', { keepDefault: true })
     expect(r.defaultCommand).toBeUndefined()
     expect(inspectDefaultShim(paths, { PATH: '' }).profile).toBe('glm')
   })
 
   test('stays when it runs another profile', async () => {
     installDefaultShim(paths, 'other', launcher)
-    const r = await removeProfile({ paths, secrets, store }, 'glm')
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(r.defaultCommand).toBeUndefined()
     expect(inspectDefaultShim(paths, { PATH: '' }).profile).toBe('other')
   })
@@ -102,7 +126,7 @@ describe('the default `claude` wrapper', () => {
   test('a claude there that ccprovider did not write is left alone', async () => {
     mkdirSync(paths.defaultBinDir, { recursive: true })
     writeFileSync(join(paths.defaultBinDir, 'claude'), '#!/bin/sh\necho mine\n', { mode: 0o755 })
-    const r = await removeProfile({ paths, secrets, store }, 'glm')
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(r.defaultCommand).toBeUndefined()
     expect(readFileSync(join(paths.defaultBinDir, 'claude'), 'utf8')).toBe('#!/bin/sh\necho mine\n')
   })
@@ -113,7 +137,7 @@ describe('the usage ledger', () => {
   test('goes with the profile, and no other profile\'s', async () => {
     saveLedger(ledgerPath(paths, 'glm'), emptyLedger())
     saveLedger(ledgerPath(paths, 'other'), emptyLedger())
-    await removeProfile({ paths, secrets, store }, 'glm')
+    await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(existsSync(ledgerPath(paths, 'glm'))).toBe(false)
     expect(existsSync(ledgerPath(paths, 'other'))).toBe(true)
   })
@@ -121,12 +145,12 @@ describe('the usage ledger', () => {
   test('and the copy a --rebuild left behind, which holds the same history', async () => {
     saveLedger(ledgerPath(paths, 'glm'), emptyLedger())
     writeFileSync(`${ledgerPath(paths, 'glm')}.bak`, '{}')
-    await removeProfile({ paths, secrets, store }, 'glm')
+    await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(existsSync(`${ledgerPath(paths, 'glm')}.bak`)).toBe(false)
   })
 
   test('a profile that never had one is removed without complaint', async () => {
-    const r = await removeProfile({ paths, secrets, store }, 'glm')
+    const r = await removeProfile({ paths, secrets, logins, store }, 'glm')
     expect(r.warnings).toEqual([])
   })
 })

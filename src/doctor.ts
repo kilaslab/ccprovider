@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
+import type { ClaudeLogins } from './claudelogin.js'
 import type { Paths } from './paths.js'
 import { profileDir } from './paths.js'
 import { relative, sep } from 'node:path'
@@ -40,6 +41,9 @@ export interface DoctorOpts {
   /** The profile runs its sessions in the real config dir (see settings.ts): there are no
    *  links of its own to check, and its agents and MCP have nowhere of their own to live. */
   shared?: boolean
+  /** Where Claude Code keeps a /login. Without it only `.credentials.json` is looked for, which
+   *  on macOS proves nothing either way. */
+  logins?: ClaudeLogins
 }
 
 export async function runDoctor(
@@ -86,14 +90,20 @@ export async function runDoctor(
   // A subscription profile has no endpoint, key or aliases to check; what matters is
   // whether it has signed in yet, plus the command and the shared-settings override.
   if (profile.kind === 'oauth') {
-    const signedIn = existsSync(join(dir, '.credentials.json'))
+    const inFile = existsSync(join(dir, '.credentials.json'))
+    // A store that cannot be asked (a denied prompt) leaves the old answer, not a failed check.
+    const inStore = !inFile && opts.logins ? await opts.logins.has(dir).catch(() => null) : null
     checks.push({
       label: 'Claude login',
-      // macOS keeps the login in the Keychain, so a missing file proves nothing there.
+      // Not signed in yet is where every new profile starts, not a fault.
       status: 'ok',
-      detail: signedIn
+      detail: inFile
         ? 'credentials found in the profile directory'
-        : `not detected in the profile directory (on macOS it may be in the Keychain) — run \`${name}\` and use /login if it asks`,
+        : inStore
+          ? `signed in (${opts.logins!.name})`
+          : inStore === false
+            ? `not signed in yet — run \`${name}\` and use /login`
+            : `not detected in the profile directory (on macOS it may be in the Keychain) — run \`${name}\` and use /login if it asks`,
     })
     checks.push(commandCheck(name, paths, opts.env ?? process.env))
     const s = settingsCheck(opts.shared ? paths.claudeDir : dir, OWNED_ENV)

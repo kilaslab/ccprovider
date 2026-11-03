@@ -1,6 +1,7 @@
 import { getPaths } from '../paths.js'
 import { loadStore, getProfile } from '../profile.js'
 import { loadSettings, sharesSessions } from '../settings.js'
+import { detectLogins } from '../claudelogin.js'
 import { detectStore } from '../secrets/index.js'
 import { runDoctor, orphanChecks, defaultChecks, slotChecks, statuslineChecks, worstStatus, type Check } from '../doctor.js'
 import { DEFAULT_SLOT } from '../slot.js'
@@ -19,11 +20,12 @@ export async function cmdDoctor(
   // `claude`, the footer, leftover commands) can be broken with no profile left at all.
   if (!names.length) console.log('No profiles yet. Run `ccprovider add`.')
 
+  const logins = detectLogins()
   let worst: 'ok' | 'warn' | 'fail' = 'ok'
   for (const n of names) {
     const profile = getProfile(store, n)
     console.log(`\n${c.bold(n)}  ${c.dim(isClaude(profile) ? 'Claude subscription' : profile.baseUrl)}`)
-    const checks = await runDoctor(n, profile, paths, secrets, { shared: sharesSessions(profile, loadSettings(paths)) })
+    const checks = await runDoctor(n, profile, paths, secrets, { shared: sharesSessions(profile, loadSettings(paths)), logins })
     for (const check of checks) render(check)
     const s = worstStatus(checks)
     if (s === 'fail') worst = 'fail'

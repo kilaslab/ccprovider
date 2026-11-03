@@ -4,6 +4,7 @@ import { answersFromFlags, verifyProvider, type AddFlags } from '../addflags.js'
 import { readSecretFromStdin } from '../stdin.js'
 import type { EditInstead, WizardResult } from '../tui/wizard.js'
 import { DEFAULT_SLOT, assertSlotWritable, saveDefaultSlot } from '../defaultslot.js'
+import { detectLogins } from '../claudelogin.js'
 import { removeProfile } from '../remove.js'
 import { selfLauncher } from '../shim.js'
 import { p } from '../tui/prompts.js'
@@ -47,7 +48,7 @@ export async function cmdAdd(paths: Paths, secrets: Secrets, opts: AddOptions): 
   // Deleted only now that the new one is confirmed: cancelling anywhere before this
   // leaves the old profile exactly as it was.
   if (result.replace) {
-    const r = await removeProfile({ paths, secrets, store }, result.name, { keepDefault: true })
+    const r = await removeProfile({ paths, secrets, logins: detectLogins(), store }, result.name, { keepDefault: true })
     for (const w of r.warnings) console.error(c.yellow(`! ${w}`))
     console.log(c.dim(`Replaced the previous "${result.name}" profile, its session history and its usage record.`))
   }
