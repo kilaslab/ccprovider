@@ -6,6 +6,22 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-03
+
+### Fixed
+
+- **`rm` deletes a `/login` profile's Claude login on macOS.** Claude Code keeps it in the
+  Keychain under a name made from the directory's path (`Claude Code-credentials-<hash>`), which
+  deleting the directory does not reach: the login stayed behind with a working refresh token,
+  and a profile added later under the same name came up signed in as that account. A login that
+  cannot be deleted is reported, as a key is.
+- **`rename` keeps a `/login` profile signed in on macOS.** The new directory has a new Keychain
+  name, so the profile came out of a rename signed out. The login is now moved with the
+  directory, read before anything changes and put back if the rename fails, like the key.
+- **`doctor` sees a `/login` in the Keychain.** It looked only for `.credentials.json`, so on macOS
+  a signed-in profile was reported as "not detected"; it now says signed in, or not signed in
+  yet.
+
 ## [0.6.0] - 2026-10-22
 
 ### Added
@@ -385,7 +401,10 @@ The first public release.
   third-party endpoint.
 - The vision MCP server's npm package is pinned to an exact version.
 
-[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/kilaslab/ccprovider/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/kilaslab/ccprovider/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/kilaslab/ccprovider/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/kilaslab/ccprovider/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/kilaslab/ccprovider/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kilaslab/ccprovider/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/kilaslab/ccprovider/compare/v0.2.0...v0.2.1
