@@ -1,4 +1,5 @@
 import { loadStore, getProfile, assertNotReserved } from '../profile.js'
+import { detectLogins } from '../claudelogin.js'
 import { renameProfile } from '../rename.js'
 import { selfLauncher } from '../shim.js'
 import { p } from '../tui/prompts.js'
@@ -20,7 +21,7 @@ export async function cmdRename(paths: Paths, secrets: Secrets, from: string, to
     if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }
   }
 
-  const r = await renameProfile({ paths, secrets, store, launcher: selfLauncher() }, from, to)
+  const r = await renameProfile({ paths, secrets, logins: detectLogins(), store, launcher: selfLauncher() }, from, to)
   console.log(`Renamed "${from}" to "${c.bold(to)}".`)
   console.log(
     r.command === 'moved'

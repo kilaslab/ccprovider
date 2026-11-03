@@ -327,6 +327,11 @@ directory on macOS) apart from `~/.claude` and every other profile. Run the prof
 `/login` once, and both accounts stay signed in side by side. It stores no API key and has
 no endpoint or model mapping; `ccprovider doctor` skips those checks for it.
 
+On macOS the Keychain entry is named after the directory's path, so it is not in the directory
+and does not go with it by itself. `ccprovider rename` moves it to the new path, so the profile
+stays signed in, and `ccprovider rm` deletes it with the profile. `doctor` looks there to tell
+whether the profile is signed in.
+
 #### Claude subscription (setup-token)
 
 The other Claude option signs in with a long-lived token instead of `/login`. Run
@@ -630,8 +635,9 @@ Anthropic-compatible endpoints. In this mode no request reaches Anthropic.
 
 Don't do the reverse: piping Claude subscription credentials into third-party tools is
 what actually violates the terms. A Claude subscription profile does not do that. A `/login` one
-never reads or moves the login, it only gives Claude Code its own config directory to
-sign in to. A setup-token one reads the token you pasted from the secret store and hands it
+only gives Claude Code its own config directory to sign in to. It never sends the login
+anywhere: the one time it reads it is `rename`, which moves it from the old directory's Keychain
+entry to the new one's on the same Mac, and `rm` deletes it. A setup-token one reads the token you pasted from the secret store and hands it
 to Claude Code, which sends it to Anthropic and nowhere else. Use it with accounts that are yours to use.
 
 </details>

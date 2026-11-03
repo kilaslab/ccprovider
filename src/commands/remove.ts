@@ -4,6 +4,7 @@ import { getPaths, isInside, profileDir } from '../paths.js'
 import { loadStore, getProfile } from '../profile.js'
 import { detectStore } from '../secrets/index.js'
 import { inspectStatusline } from '../statusline.js'
+import { detectLogins } from '../claudelogin.js'
 import { removeProfile } from '../remove.js'
 import { DEFAULT_SLOT, stashedKeys } from '../defaultslot.js'
 import { p } from '../tui/prompts.js'
@@ -41,7 +42,7 @@ export async function cmdRemove(
     if (p.isCancel(ok) || !ok) { console.log('Cancelled.'); return 1 }
   }
 
-  const r = await removeProfile({ paths, secrets, store }, name)
+  const r = await removeProfile({ paths, secrets, logins: detectLogins(), store }, name)
   for (const w of r.warnings) console.error(c.yellow(`! ${w}`))
   console.log(`Removed "${name}". Your ~/.claude is untouched.`)
   if (r.defaultCommand === 'removed') console.log(`Removed the default \`claude\` command too: \`claude\` runs Claude Code as installed again.`)

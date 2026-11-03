@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync, readFileSync, renameSync, type Dirent } from 'node:fs'
 import { join } from 'node:path'
+import type { ClaudeLogins } from './claudelogin.js'
 import { profileDir, type Paths } from './paths.js'
 import { assertNotReserved, getProfile, ProfileError, saveStore, validateName } from './profile.js'
 import type { SecretStore } from './secrets/index.js'
@@ -12,6 +13,7 @@ import { ledgerFiles, ledgerPath } from './usage.js'
 export interface RenameDeps {
   paths: Paths
   secrets: SecretStore
+  logins: ClaudeLogins
   store: ProfileStore
   /** What a launcher for the new name should exec — see `selfLauncher`. */
   launcher: string[]
@@ -31,9 +33,9 @@ export interface RenameResult {
 }
 
 /**
- * Rename a profile, keeping its four identities in step: the store key, the profile
- * directory (which holds the session history), the secret-store account, and the
- * launcher command.
+ * Rename a profile, keeping its identities in step: the store key, the profile directory
+ * (which holds the session history), the secret-store account, the Claude login filed under
+ * the directory's path, and the launcher command.
  *
  * Every change before the store is saved has an undo, and the store write is the commit
  * point: fail anywhere before it and the previous state is restored; fail after it and
@@ -41,7 +43,7 @@ export interface RenameResult {
  * half-renamed with the config still naming the old profile.
  */
 export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: string): Promise<RenameResult> {
-  const { paths, secrets, store, launcher } = deps
+  const { paths, secrets, logins, store, launcher } = deps
   const save = deps.save ?? saveStore
 
   // ---- preflight: nothing below this block may change anything
@@ -87,6 +89,11 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
     )
   }
 
+  // On macOS Claude Code files a /login under the directory's path, so moving the directory
+  // signs the profile out unless the login is moved as well. Read here, like the key, so a
+  // denied prompt stops the rename before anything has moved.
+  const login = await logins.get(dirFrom)
+
   const hadCommand = inspectShim(paths, from).state === 'ours'
   if (hadCommand) {
     commandName(to) // reserved names fail here, not halfway through
@@ -124,6 +131,12 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
     if (key !== null) {
       await secrets.set(to, key)
       undo.push(() => secrets.delete(to))
+    }
+    // A login already under the new path belongs to no profile (there is no directory there),
+    // so it is replaced.
+    if (login !== null) {
+      await logins.set(dirTo, login)
+      undo.push(() => logins.delete(dirTo))
     }
     if (lstatSafe(dirFrom)) {
       renameSync(dirFrom, dirTo)
@@ -179,6 +192,13 @@ export async function renameProfile(deps: RenameDeps, fromRaw: string, toRaw: st
       await secrets.delete(from)
     } catch (e) {
       warnings.push(`The old key entry "${from}" is still in the secret store (${(e as Error).message}); it is unused and safe to delete.`)
+    }
+  }
+  if (login !== null) {
+    try {
+      await logins.delete(dirFrom)
+    } catch (e) {
+      warnings.push(`The Claude login under the old directory is still in the ${logins.name} (${(e as Error).message}); it is unused and safe to delete.`)
     }
   }
 

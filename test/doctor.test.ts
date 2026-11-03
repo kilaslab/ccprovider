@@ -8,6 +8,7 @@ import { serverJson } from '../src/mcp.js'
 import { findPreset } from '../src/presets.js'
 import { profileDir, type Paths } from '../src/paths.js'
 import { MemoryStore } from '../src/secrets/index.js'
+import { MemoryLogins } from '../src/claudelogin.js'
 import { installDefaultShim, installShim } from '../src/shim.js'
 import type { Profile } from '../src/types.js'
 
@@ -105,6 +106,35 @@ describe('command check', () => {
     const c = find(await doctor(profile()), label)!
     expect(c.status).toBe('warn')
     expect(c.detail).toContain('not a ccprovider launcher')
+  })
+})
+
+describe('Claude login check', () => {
+  const subscription: Profile = { kind: 'oauth', baseUrl: '', aliases: {}, preset: 'claude' }
+  const loginCheck = async (logins?: MemoryLogins) =>
+    find(await runDoctor('glm', subscription, paths, new MemoryStore(), { skipNetwork: true, env: { PATH: paths.binDir }, runtime: nodeOk, logins }), 'Claude login')!
+
+  // Regression: on macOS the login is in the Keychain, so a profile that was signed in was
+  // reported as "not detected".
+  test('a login in the store is reported as signed in', async () => {
+    const logins = new MemoryLogins()
+    await logins.set(dir, Buffer.from('{}'))
+    expect(await loginCheck(logins)).toMatchObject({ status: 'ok', detail: 'signed in (memory)' })
+  })
+
+  test('a store that has none says so plainly', async () => {
+    expect((await loginCheck(new MemoryLogins())).detail).toMatch(/^not signed in yet/)
+  })
+
+  test('a store that cannot be asked falls back to the cautious wording', async () => {
+    const denied = Object.assign(new MemoryLogins(), { has: async () => { throw new Error('denied') } })
+    expect((await loginCheck(denied)).detail).toContain('may be in the Keychain')
+  })
+
+  test('without a store, only the file is looked for', async () => {
+    expect((await loginCheck()).detail).toContain('may be in the Keychain')
+    writeFileSync(join(dir, '.credentials.json'), '{}')
+    expect((await loginCheck()).detail).toBe('credentials found in the profile directory')
   })
 })
 
